@@ -1,0 +1,22 @@
+# Terraform (CRITICO: Evita o upload de 300MB do provider)
+.terraform/
+*.tfstate
+*.tfstate.backup
+.terraform.tfstate.lock.info
+*.hcl
+
+# Java / Maven
+dependency-reduced-pom.xml
+target/
+
+# Rust / Cargo
+src/rust_processor/target/
+**/*.rs.bk
+
+# Python / Scripts
+__pycache__/
+*.zip
+
+# OS Files
+.DS_Store
+Thumbs.db

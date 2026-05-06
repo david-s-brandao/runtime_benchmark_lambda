@@ -1,0 +1,1 @@
+seq 1 100 | xargs -P 10 -I{} curl -sL "https://picsum.photos/seed/{}/800/600" -o "image_{}.jpg"
