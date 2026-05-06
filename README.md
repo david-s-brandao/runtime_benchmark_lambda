@@ -143,7 +143,7 @@ Rust's longer compile times are a real CI/CD cost — slower feedback loops and 
 ### Handler Comparison
 
 #### Java 21 Handler
-*(Full implementation available in [src/java_processor/]())*
+*(Full implementation available in [/src/java_processor/src/main/java/java_processor/Main.java](/src/java_processor/src/main/java/java_processor/Main.java))*
 
 ```java
 public Void handleRequest(SQSEvent event, Context context) {
@@ -168,7 +168,7 @@ public Void handleRequest(SQSEvent event, Context context) {
 ```
 
 #### Rust Handler
-*(Full implementation available in [src/rust_processor/]())*
+*(Full implementation available in [/src/rust_processor/src/main.rs](src/rust_processor/src/main.rs))*
 
 ```rust
 async fn handler(event: LambdaEvent<SqsEvent>, s3: S3Client, xray: XRayClient) -> Result<(), Error> {
