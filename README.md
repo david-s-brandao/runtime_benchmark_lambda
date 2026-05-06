@@ -6,7 +6,7 @@ Traditional enterprise languages like Java rely on heavy JVMs, leading to severe
 
 ## TL;DR
 
-Rust completely outperformed Java across all metrics in this sustained high-concurrency benchmark (~1,000+ invocations per function)
+Rust completely outperformed Java across all metrics in this sustained high-concurrency benchmark (~1,000+ invocations per function).
 
 - **Cold Starts:** Rust is 10x faster (175ms average vs. Java's 1,814ms).
 - **Memory Footprint:** Both functions were allocated an identical 512MB. Rust consumed only ~43MB of that budget versus Java's ~199MB — a 78% reduction driven purely by runtime efficiency, not configuration.
@@ -54,23 +54,18 @@ graph LR
   <br>
   <i>Left: Java 21 Output (70%) &nbsp;&nbsp; | &nbsp;&nbsp; Right: Rust Output (70%)</i>
 </p>
+
+> **Note:** See the [Full Image Gallery](images/GALLERY.md) for a side-by-side visual comparison of all 100 processed samples, proving deterministic execution across both runtimes.
+
 <br>
 
-## Environment & Methodology
-
-Both functions were subjected to the exact same AWS environment constraints and IaC configurations:
-
-- **Region:** `us-east-1`
-- **Architecture:** `x86_64`
-- **Allocated Memory:** 512 MB per function — identical for both. Memory consumption differences reflect runtime behavior, not configuration.
-- **Concurrency Limit:** Unreserved (-1) to allow free horizontal scaling.
-- **Event Source Mapping:** SQS Batch Size set to `1` to force maximum concurrency.
-- **Runtimes:** Java 21 (Managed Runtime) vs. Rust (Edition 2021 on `provided.al2023` Custom Runtime).
-- **SnapStart:** Explicitly disabled for Java. SnapStart is a deployment-time optimization that requires opt-in and additional engineering overhead; excluding it reflects the default production experience for Java Lambda functions.
-
-Performance and trace data were extracted directly from AWS using CloudWatch Logs and AWS X-Ray via an automated consolidation script. The sample size consists of 1,026 invocations for Java and 1,028 for Rust, capturing both cold starts and warm executions under aggressive parallel load.
-
 ## Detailed Results
+
+<br>
+<p align="center">
+  <img src="images/benchmark_overview.png" width="50%" alt="Benchmark Metrics Overview">
+</p>
+<br>
 
 ### 1. Cold Starts (Init Duration)
 
@@ -113,16 +108,17 @@ Based on AWS Lambda pricing (`us-east-1`, x86_64: $0.0000166667 per GB-second) a
 | 10,000,000 | ~$71.00 | ~$19.00 | ~$52.00 |
 | 100,000,000 | ~$710.00 | ~$190.00 | ~$520.00 |
 
-> **Note:** Projections are based on observed average billed duration per invocation (Java: ~1,452ms, Rust: ~389ms at 512MB). Free tier, request charges, and data transfer costs are excluded. Real-world savings will vary with workload distribution.
+## Environment & Methodology
 
-### Comparative Summary
+Both functions were subjected to the exact same AWS environment constraints and IaC configurations:
 
-| Metric | Java | Rust | Advantage |
-|--------|------|------|-----------|
-| **Average Cold Start** | 1814 ms | 175 ms | Rust is 10.3x faster |
-| **Median Duration (p50)** | 497 ms | 254 ms | Rust is ~2x faster |
-| **Peak Memory (natural)** | ~199 MB | ~43 MB | Rust uses 4.6x less (same 512MB allocation) |
-| **Infrastructure Scaling** | High Concurrency | Low Concurrency | Rust clears the SQS backlog faster |
+- **Region:** `us-east-1`
+- **Architecture:** `x86_64`
+- **Allocated Memory:** 512 MB per function — identical for both. Memory consumption differences reflect runtime behavior, not configuration.
+- **Concurrency Limit:** Unreserved (-1) to allow free horizontal scaling.
+- **Event Source Mapping:** SQS Batch Size set to `1` to force maximum concurrency.
+- **Runtimes:** Java 21 (Managed Runtime) vs. Rust (Edition 2021 on `provided.al2023` Custom Runtime).
+- **SnapStart:** Explicitly disabled for Java.
 
 ## Code Complexity Trade-off
 
@@ -138,12 +134,10 @@ Rust's performance advantages come with real engineering costs. This section giv
 | **Cross-compilation** | Not required | Required (`cargo lambda` or Docker with `cross`) |
 | **Compile Time (approx.)** | ~10–20s (incremental) | ~45–90s (full release build) |
 
-Rust's longer compile times are a real CI/CD cost — slower feedback loops and slightly higher build pipeline minutes. For teams shipping frequently, this is worth factoring in.
-
 ### Handler Comparison
 
 #### Java 21 Handler
-*(Full implementation available in [/src/java_processor/src/main/java/java_processor/Main.java](/src/java_processor/src/main/java/java_processor/Main.java))*
+*(Full implementation available in [src/java_processor/src/main/java/java_processor/Main.java](src/java_processor/src/main/java/java_processor/Main.java))*
 
 ```java
 public Void handleRequest(SQSEvent event, Context context) {
@@ -168,7 +162,7 @@ public Void handleRequest(SQSEvent event, Context context) {
 ```
 
 #### Rust Handler
-*(Full implementation available in [/src/rust_processor/src/main.rs](src/rust_processor/src/main.rs))*
+*(Full implementation available in [src/rust_processor/src/main.rs](src/rust_processor/src/main.rs))*
 
 ```rust
 async fn handler(event: LambdaEvent<SqsEvent>, s3: S3Client, xray: XRayClient) -> Result<(), Error> {
@@ -184,21 +178,16 @@ async fn handler(event: LambdaEvent<SqsEvent>, s3: S3Client, xray: XRayClient) -
 }
 ```
 
-The handler logic looks similar at this level of abstraction, but the surface complexity diverges in the build pipeline and operational setup, not the application code itself.
-
 ## Limitations & Scope
 
-These results should be interpreted with the following constraints in mind:
-
-- **Workload type:** This benchmark is CPU-bound (image compression). Rust's advantage may be less pronounced for I/O-bound or memory-bound workloads where the bottleneck lies outside the runtime.
-- **JVM warmup:** The 30-minute cycle destroys Lambda environments before the JVM can reach sustained peak optimization. In architectures with persistent warm containers (e.g., high-frequency workloads with provisioned concurrency), Java's performance gap would narrow.
-- **SnapStart excluded by design:** Java Lambda SnapStart can meaningfully reduce cold start times but requires explicit opt-in and adds deployment complexity. This benchmark reflects the default Java Lambda experience.
-- **Single region:** Results were collected in `us-east-1`. Cold start behavior can vary across regions due to Lambda fleet density differences.
-- **Single image size/type:** The benchmark used 800×600 JPEG inputs. Results may differ for larger images or different formats.
+- **Workload type:** This benchmark is CPU-bound (image compression).
+- **JVM warmup:** The 30-minute cycle destroys Lambda environments before the JVM can reach sustained peak optimization.
+- **SnapStart excluded by design:** Reflects the default production experience without deployment-time optimizations.
+- **Single image size/type:** Benchmark used 800×600 JPEG inputs.
 
 ## Product Structure
 
-```PlainText
+```text
 runtime_benchmark_lambda/
 ├── terraform/               # IaC — deploys all AWS resources
 ├── src/
@@ -209,67 +198,64 @@ runtime_benchmark_lambda/
 │   └── processed_images/    # Output from both runtimes
 ├── reports/                 # Daily JSON reports exported from S3
 │
-└── scripts/                 # Notification + Logs lambda source code and other scripts
+└── scripts/                 # Notification, Logs lambda, and generators
 ```
 
-## Automated Deployment
+## Reproducibility Guide (Tutorial)
 
-Two deploy scripts are provided to build all components and optionally run `terraform plan` in a single command. Both scripts do the same thing — pick the one that matches your OS.
+To reproduce this benchmark in your own AWS account, follow this chronological pipeline.
 
-| Script | Platform |
-|--------|----------|
-| `deploy.sh` | Linux / macOS |
-| `deploy.py` | Windows (and Linux / macOS) |
+### Prerequisites
+Ensure your local environment has the following installed:
+- **AWS CLI:** Authenticated with permissions.
+- **Terraform:** For infrastructure deployment.
+- **Python 3.7+:** To run the dataset generator.
+- **Java 21 & Maven:** To compile the Java Lambda.
+- **Rust & Cargo:** To cross-compile the Rust binary.
 
-**What they do:**
-1. Zip `scripts/producer.py` → `producer.zip` and `scripts/analyzer.py` → `analyzer.zip`
-2. Build and zip the Rust Lambda (`make deploy`)
-3. Package the Java Lambda (`mvn package`)
-4. Ask whether to run `terraform plan` — if yes, prompt for the three S3 bucket names and pass them to Terraform
+### Step 1: Generate the Test Dataset
+The benchmark requires 100 deterministic images. Install the required HTTP library and run the fetcher:
 
-**Usage:**
+```bash
+pip install aiohttp
+python scripts/fetch_images.py
+```
+> *Images are saved to `images/original_images/`.*
+
+### Step 2: Build & Deploy
+Two deployment scripts are provided to package the Lambdas and execute Terraform. Choose the one for your OS.
 
 ```bash
 # Linux / macOS
 ./deploy.sh
 
-# Windows (or any platform with Python 3)
+# Windows (or any OS with Python 3)
 python deploy.py
 ```
 
-> The scripts only run `terraform plan`. Change the last command to `terraform apply` once you are ready to provision resources.
+*(Note: The script runs `terraform plan`. Once verified, run `terraform apply` manually to provision resources).*
 
-## Reproducibility
+### Step 3: Trigger the Benchmark
+Either wait for the EventBridge cron schedule (every 30 mins) or manually invoke the **Notification Lambda** via the AWS Console to dispatch the 100 events immediately.
 
-### Test Images
-
-> Each URL is seeded (`/seed/{n}/`), so the images are deterministic — seed 42 will always return the same 800×600 image regardless of when the command is run.
-
-> Images sourced from [Lorem Picsum](https://picsum.photos/) are covered by the [Unsplash License](https://unsplash.com/license) — free for commercial and non-commercial use, no attribution required.
-
-### Infrastructure
-
-The benchmark infrastructure as code (IaC) is available in this repository inside the [`terraform/`](/terraform/) directory. To reproduce these results in your own AWS account:
-
-1. Authenticate your terminal using the AWS CLI.
-2. Initialize and deploy the infrastructure using Terraform:
+### Step 4: Export Telemetry
+Consolidate X-Ray and CloudWatch data into a JSON report:
 
 ```bash
-terraform init
-terraform plan
-terraform apply
-```
-
-3. Trigger the benchmark by either waiting for the EventBridge cron schedule (every 30 minutes) or by manually invoking the Notification Lambda via the AWS Console.
-
-4. Logs Lambda is invoked automatically at 11:00pm (US-East-1 time). If sufficient data is collected earlier, you can export the consolidated JSON metrics manually:
-
-```bash
+# Force log consolidation
 aws lambda invoke --function-name logs_lambda --payload '{}' response.json \
   --region us-east-1 --cli-binary-format raw-in-base64-out
 
-aws s3 sync s3://logs-lambda-benchmark/ . \
+# Download the reports
+aws s3 sync s3://<YOUR_OUTPUT_BUCKET_NAME>/ reports/ \
   --exclude "*" --include "*daily_report.json" \
   --region us-east-1
-# Note: this will download all daily reports from the bucket
+```
+
+### Step 5: Generate Charts (Optional)
+To regenerate the performance visualization charts locally from your own benchmark data:
+
+```bash
+pip install matplotlib numpy
+python scripts/generate_charts.py
 ```

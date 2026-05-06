@@ -1,83 +1,39 @@
-import dash
-from dash import dcc, html
-import plotly.graph_objects as go
-import json
+import matplotlib.pyplot as plt
+import numpy as np
+import os
 
-# Your raw JSON data
-json_data = """{
-  "generated_at": "2026-05-05T23:07:43Z",
-  "window": "last_24h",
-  "functions": {
-    "java_function": {
-      "cloudwatch": {
-        "invocations": 1026,
-        "cold_starts": 116,
-        "duration_ms": {
-          "min": 318.14, "avg": 1248.19, "p50": 498.18, "p95": 6262.76, "p99": 8237.59, "max": 15955.58
-        },
-        "billed_ms": { "avg": 1453.86, "total": 1491664.0 },
-        "memory_used_mb": { "avg": 198.39, "max": 209 },
-        "cold_start_ms": { "avg": 1814.78, "max": 2395.67 }
-      }
-    },
-    "rust_function": {
-      "cloudwatch": {
-        "invocations": 1028,
-        "cold_starts": 98,
-        "duration_ms": {
-          "min": 120.48, "avg": 371.05, "p50": 254.48, "p95": 683.81, "p99": 3692.22, "max": 6766.31
-        },
-        "billed_ms": { "avg": 388.25, "total": 399116.0 },
-        "memory_used_mb": { "avg": 43.79, "max": 45 },
-        "cold_start_ms": { "avg": 175.17, "max": 253.64 }
-      }
-    }
-  }
-}"""
+labels = ['Java 21', 'Rust']
+cold_starts = [1814.78, 175.26]       # ms
+p99_duration = [8229.60, 3691.89]     # ms
+memory_peak = [209.00, 45.00]         # MB
 
-data = json.loads(json_data)
-funcs = data['functions']
+plt.style.use('dark_background')
+fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 4))
+fig.suptitle('AWS Lambda: Java 21 vs Rust Benchmark', fontsize=18, fontweight='bold', color='#FF9900')
 
-# Extracting data for the charts
-labels = ['Java', 'Rust']
-avg_duration = [funcs['java_function']['cloudwatch']['duration_ms']['avg'], 
-                funcs['rust_function']['cloudwatch']['duration_ms']['avg']]
-p95_duration = [funcs['java_function']['cloudwatch']['duration_ms']['p95'], 
-                funcs['rust_function']['cloudwatch']['duration_ms']['p95']]
-max_memory = [funcs['java_function']['cloudwatch']['memory_used_mb']['max'], 
-              funcs['rust_function']['cloudwatch']['memory_used_mb']['max']]
-avg_cold_start = [funcs['java_function']['cloudwatch']['cold_start_ms']['avg'], 
-                  funcs['rust_function']['cloudwatch']['cold_start_ms']['avg']]
+colors = ['#ED8B00', '#DEA584']
 
-app = dash.Dash(__name__)
+# 1. Cold Starts
+ax1.bar(labels, cold_starts, color=colors, width=0.6)
+ax1.set_title('Avg Cold Start (ms)', fontsize=14)
+ax1.set_ylabel('Milliseconds')
+for i, v in enumerate(cold_starts):
+    ax1.text(i, v + 50, f"{v} ms", ha='center', fontweight='bold')
 
-app.layout = html.Div([
-    html.H1("Function Performance Dashboard", style={'textAlign': 'center', 'fontFamily': 'sans-serif'}),
-    
-    html.Div([
-        # Duration Chart
-        dcc.Graph(
-            figure=go.Figure(data=[
-                go.Bar(name='Average (ms)', x=labels, y=avg_duration),
-                go.Bar(name='p95 (ms)', x=labels, y=p95_duration)
-            ]).update_layout(title='Execution Duration (ms)', barmode='group')
-        ),
-        
-        # Memory Chart
-        dcc.Graph(
-            figure=go.Figure(data=[
-                go.Bar(name='Max Memory (MB)', x=labels, y=max_memory)
-            ]).update_layout(title='Maximum Memory Usage (MB)')
-        ),
+# 2. Tail Latency (p99)
+ax2.bar(labels, p99_duration, color=colors, width=0.6)
+ax2.set_title('p99 Execution Tail Latency (ms)', fontsize=14)
+for i, v in enumerate(p99_duration):
+    ax2.text(i, v + 200, f"{v} ms", ha='center', fontweight='bold')
 
-        # Cold Start Chart
-        dcc.Graph(
-            figure=go.Figure(data=[
-                go.Bar(name='Avg Cold Start (ms)', x=labels, y=avg_cold_start)
-            ]).update_layout(title='Average Cold Start Time (ms)')
-        )
-    ], style={'maxWidth': '1000px', 'margin': '0 auto'})
-])
-
-if __name__ == '__main__':
-    app.run(debug=True)
+# 3. Memory Usage
+ax3.bar(labels, memory_peak, color=colors, width=0.6)
+ax3.set_title('Peak Memory Usage (MB)', fontsize=14)
+ax3.set_ylabel('Megabytes')
+for i, v in enumerate(memory_peak):
+    ax3.text(i, v + 5, f"{v} MB", ha='center', fontweight='bold')
+plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+os.makedirs('../images', exist_ok=True)
+output_path = '../images/benchmark_overview.png'
+plt.savefig(output_path, transparent=True, dpi=300)
+print(f"Chart successfully saved to {output_path}")
