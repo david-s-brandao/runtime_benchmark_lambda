@@ -8,7 +8,7 @@ p99_duration = [8229.60, 3691.89]     # ms
 memory_peak = [209.00, 45.00]         # MB
 
 plt.style.use('dark_background')
-fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 4))
+fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 6))
 fig.suptitle('AWS Lambda: Java 21 vs Rust Benchmark', fontsize=18, fontweight='bold', color='#FF9900')
 
 colors = ['#ED8B00', '#DEA584']
@@ -33,7 +33,7 @@ ax3.set_ylabel('Megabytes')
 for i, v in enumerate(memory_peak):
     ax3.text(i, v + 5, f"{v} MB", ha='center', fontweight='bold')
 plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-os.makedirs('../images', exist_ok=True)
-output_path = '../images/benchmark_overview.png'
+os.makedirs('images', exist_ok=True)
+output_path = 'images/benchmark_overview.png'
 plt.savefig(output_path, transparent=True, dpi=300)
 print(f"Chart successfully saved to {output_path}")

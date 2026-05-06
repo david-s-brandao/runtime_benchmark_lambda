@@ -63,7 +63,7 @@ graph LR
 
 <br>
 <p align="center">
-  <img src="images/benchmark_overview.png" width="50%" alt="Benchmark Metrics Overview">
+  <img src="images/benchmark_overview.png" alt="Benchmark Metrics Overview">
 </p>
 <br>
 
