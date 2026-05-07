@@ -17,6 +17,15 @@ Rust completely outperformed Java across all metrics in this sustained high-conc
 
 The benchmark simulates a real-world, event-driven image processing pipeline. To ensure absolute fairness, the architecture employs a Fanout pattern, guaranteeing both languages receive the exact same workload at the exact same millisecond.
 
+<br>
+<p align="center">
+  <img src="images/architecture_diagram.png" width="90%" alt="AWS Event-Driven Architecture">
+</p>
+<br>
+
+<details>
+<summary><b>Mermaid Source (Docs-as-Code)</b></summary>
+
 ```mermaid
 graph LR
     EB[EventBridge Cron] -->|30m Trigger| NL(Notification Lambda)
@@ -37,6 +46,8 @@ graph LR
     LL(Logs Lambda) -.->|Fetches Metrics Daily| CW
     LL -.->|Saves JSON Report| S3_Out
 ```
+</details>
+
 
 ### The Workload
 
