@@ -1,0 +1,70 @@
+{
+  "generated_at": "2026-05-05T23:07:43Z",
+  "window": "last_24h",
+  "functions": {
+    "java_function": {
+      "cloudwatch": {
+        "invocations": 1026,
+        "cold_starts": 116,
+        "duration_ms": {
+          "min": 318.14,
+          "avg": 1248.19,
+          "p50": 498.18,
+          "p95": 6262.76,
+          "p99": 8237.59,
+          "max": 15955.58
+        },
+        "billed_ms": {
+          "avg": 1453.86,
+          "total": 1491664.0
+        },
+        "memory_used_mb": {
+          "avg": 198.39,
+          "max": 209
+        },
+        "cold_start_ms": {
+          "avg": 1814.78,
+          "max": 2395.67
+        }
+      },
+      "xray": {
+        "trace_count": 700,
+        "error_count": 0,
+        "fault_count": 0,
+        "avg_response_time_ms": 856.0
+      }
+    },
+    "rust_function": {
+      "cloudwatch": {
+        "invocations": 1028,
+        "cold_starts": 98,
+        "duration_ms": {
+          "min": 120.48,
+          "avg": 371.05,
+          "p50": 254.48,
+          "p95": 683.81,
+          "p99": 3692.22,
+          "max": 6766.31
+        },
+        "billed_ms": {
+          "avg": 388.25,
+          "total": 399116.0
+        },
+        "memory_used_mb": {
+          "avg": 43.79,
+          "max": 45
+        },
+        "cold_start_ms": {
+          "avg": 175.17,
+          "max": 253.64
+        }
+      },
+      "xray": {
+        "trace_count": 699,
+        "error_count": 0,
+        "fault_count": 0,
+        "avg_response_time_ms": 236.4
+      }
+    }
+  }
+}

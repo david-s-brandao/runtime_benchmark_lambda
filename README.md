@@ -264,9 +264,14 @@ aws s3 sync s3://<YOUR_OUTPUT_BUCKET_NAME>/ reports/ \
 ```
 
 ### Step 5: Generate Charts (Optional)
-To regenerate the performance visualization charts locally from your own benchmark data:
+To regenerate the performance visualization charts locally, the script needs actual telemetry data to parse. 
+
+**Prerequisite:** You must complete **Step 4** first so that the `reports/` directory contains at least one daily JSON report.
+>There is already an example inside the directory.
 
 ```bash
-pip install matplotlib numpy
+pip install matplotlib
 python scripts/generate_charts.py
 ```
+
+The image will be saved inside the `images/` directory.
