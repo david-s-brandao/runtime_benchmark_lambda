@@ -2,7 +2,7 @@ build:
 	cargo lambda build --release
 
 zip:
-	cp target/lambda/bootstrap/bootstrap .
+	cp target/lambda/processor/bootstrap .
 	zip bootstrap.zip bootstrap
 	rm bootstrap
 

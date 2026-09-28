@@ -14,10 +14,10 @@ resource "aws_lambda_permission" "allow_eventbridge" {
   source_arn    = aws_cloudwatch_event_rule.logs_schedule.arn
 }
 
-# Trigger noti_lambda every minute, only between 07:00 and 23:00 UTC (Mon-Sun)
+# Publish each input image every 30 minutes, all day (UTC).
 resource "aws_cloudwatch_event_rule" "noti_schedule" {
   schedule_expression = "cron(0/30 * * * ? *)"
-  description         = "Trigger noti_lambda every minute during daytime (07:00-23:00 UTC)"
+  description         = "Publish input images every 30 minutes (UTC)"
 }
 
 resource "aws_cloudwatch_event_target" "noti_target" {
@@ -50,6 +50,16 @@ resource "aws_lambda_event_source_mapping" "sqs_rust_trigger" {
     maximum_concurrency = 100
   }
 }
+resource "aws_lambda_event_source_mapping" "sqs_java_snapstart_trigger" {
+  event_source_arn = aws_sqs_queue.sqs_java_snapstart.arn
+  # SnapStart is only available on published versions, not $LATEST.
+  function_name    = aws_lambda_function.java_snapstart_lambda.qualified_arn
+  batch_size       = 1
+  depends_on       = [aws_iam_role_policy_attachment.processor_sqs]
+  scaling_config {
+    maximum_concurrency = 100
+  }
+}
 
 resource "aws_xray_sampling_rule" "java_high_sampling" {
   rule_name      = "java-high-sampling"
@@ -76,5 +86,19 @@ resource "aws_xray_sampling_rule" "rust_high_sampling" {
   http_method    = "*"
   url_path       = "*"
   resource_arn   = "arn:aws:lambda:us-east-1:586710034156:function:rust_function"
+  version        = 1
+}
+
+resource "aws_xray_sampling_rule" "java_snapstart_high_sampling" {
+  rule_name      = "java-snapstart-high-sampling"
+  priority       = 52
+  fixed_rate     = 1.0
+  reservoir_size = 100
+  service_name   = "java_function_snapstart"
+  service_type   = "AWS::Lambda::Function"
+  host           = "*"
+  http_method    = "*"
+  url_path       = "*"
+  resource_arn   = aws_lambda_function.java_snapstart_lambda.arn
   version        = 1
 }

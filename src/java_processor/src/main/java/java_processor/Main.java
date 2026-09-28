@@ -3,64 +3,114 @@ package java_processor;
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
 import com.amazonaws.services.lambda.runtime.events.SQSEvent;
-import com.amazonaws.xray.AWSXRay;
-import com.amazonaws.xray.entities.Segment;
+import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
-import software.amazon.awssdk.core.sync.RequestBody;
+import javax.imageio.IIOImage;
 import javax.imageio.ImageIO;
-import java.awt.*;
+import javax.imageio.ImageWriteParam;
+import javax.imageio.ImageWriter;
+import javax.imageio.stream.ImageOutputStream;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
-public class Main implements RequestHandler<SQSEvent, Void> {
-
+/**
+ * Benchmark workload (Java side). Must stay functionally identical to processor.rs:
+ *   decode -> resize to 70% (bilinear, exact dimensions) -> encode JPEG q=75
+ * The image processing stays independent of S3 I/O in the Lambda handler.
+ */
+public final class Main implements RequestHandler<SQSEvent, Void> {
+    static final int SCALE_PERCENT = 70;      // integer math: no float rounding differences
+    static final float JPEG_QUALITY = 0.75f;  // explicit, not the library default
     private final S3Client s3 = S3Client.create();
-    private final String bucketIn  = System.getenv("BUCKET_IN");
-    private final String bucketOut = System.getenv("BUCKET_OUT");
 
     @Override
     public Void handleRequest(SQSEvent event, Context context) {
+        String bucketIn = System.getenv("BUCKET_IN");
+        String bucketOut = System.getenv("BUCKET_OUT");
         for (SQSEvent.SQSMessage message : event.getRecords()) {
             String filename = message.getBody();
-            Segment segment = AWSXRay.beginSegment("java_function");
             try {
-                byte[] imageBytes = s3.getObjectAsBytes(
-                    GetObjectRequest.builder().bucket(bucketIn).key(filename).build()
-                ).asByteArray();
-
-                BufferedImage original = ImageIO.read(new java.io.ByteArrayInputStream(imageBytes));
-                BufferedImage compressed = compress(original, 0.7f);
-
-                ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                ImageIO.write(compressed, "jpg", baos);
-
-                s3.putObject(
-                    PutObjectRequest.builder().bucket(bucketOut).key("Java_lambda_" + filename).build(),
-                    RequestBody.fromBytes(baos.toByteArray())
-                );
-
-                segment.putAnnotation("filename", filename);
+                long t0 = System.nanoTime();
+                byte[] input = s3.getObjectAsBytes(GetObjectRequest.builder()
+                        .bucket(bucketIn).key(filename).build()).asByteArray();
+                long t1 = System.nanoTime();
+                Result result = process(input);
+                long t2 = System.nanoTime();
+                s3.putObject(PutObjectRequest.builder()
+                        .bucket(bucketOut).key("Java_lambda_" + filename)
+                        .contentType("image/jpeg").build(), RequestBody.fromBytes(result.jpeg()));
+                long t3 = System.nanoTime();
                 context.getLogger().log("Processed: " + filename);
+                context.getLogger().log(String.format(java.util.Locale.ROOT,
+                        "BenchmarkStages: client_ms=0.00 get_ms=%.2f process_ms=%.2f put_ms=%.2f",
+                        (t1 - t0) / 1e6, (t2 - t1) / 1e6, (t3 - t2) / 1e6));
             } catch (Exception e) {
-                segment.addException(e);
-                context.getLogger().log("Error: " + e.getMessage());
-                throw new RuntimeException(e);
-            } finally {
-                AWSXRay.endSegment();
+                context.getLogger().log("Error processing " + filename + ": " + e);
+                throw new RuntimeException("Failed to process " + filename, e);
             }
         }
         return null;
     }
 
-    private BufferedImage compress(BufferedImage src, float scale) {
-        int w = (int) (src.getWidth() * scale);
-        int h = (int) (src.getHeight() * scale);
+    public record Timings(double decodeMs, double resizeMs, double encodeMs) {}
+    public record Result(byte[] jpeg, Timings timings) {}
+
+    public static Result process(byte[] input) throws IOException {
+        long t0 = System.nanoTime();
+        BufferedImage src = ImageIO.read(new ByteArrayInputStream(input));
+        long t1 = System.nanoTime();
+
+        BufferedImage resized = resize(src,
+                src.getWidth() * SCALE_PERCENT / 100,
+                src.getHeight() * SCALE_PERCENT / 100);
+        long t2 = System.nanoTime();
+
+        byte[] jpeg = encodeJpeg(resized, JPEG_QUALITY);
+        long t3 = System.nanoTime();
+
+        return new Result(jpeg, new Timings((t1 - t0) / 1e6, (t2 - t1) / 1e6, (t3 - t2) / 1e6));
+    }
+
+    static BufferedImage resize(BufferedImage src, int w, int h) {
         BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
         Graphics2D g = out.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+        g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
         g.drawImage(src, 0, 0, w, h, null);
         g.dispose();
         return out;
+    }
+
+    static byte[] encodeJpeg(BufferedImage img, float quality) throws IOException {
+        ImageWriter writer = ImageIO.getImageWritersByFormatName("jpeg").next();
+        ImageWriteParam param = writer.getDefaultWriteParam();
+        param.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
+        param.setCompressionQuality(quality);
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        try (ImageOutputStream ios = ImageIO.createImageOutputStream(baos)) {
+            writer.setOutput(ios);
+            writer.write(null, new IIOImage(img, null, null), param);
+        } finally {
+            writer.dispose();
+        }
+        return baos.toByteArray();
+    }
+
+    /** Local test: java Main in.jpg out.jpg */
+    public static void main(String[] args) throws IOException {
+        System.setProperty("java.awt.headless", "true");
+        byte[] in = Files.readAllBytes(Path.of(args[0]));
+        Result r = process(in);
+        Files.write(Path.of(args[1]), r.jpeg());
+        System.out.printf("java  decode=%.2fms resize=%.2fms encode=%.2fms out=%d bytes%n",
+                r.timings().decodeMs(), r.timings().resizeMs(), r.timings().encodeMs(), r.jpeg().length);
     }
 }

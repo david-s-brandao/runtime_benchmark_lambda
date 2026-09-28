@@ -4,6 +4,10 @@ resource "aws_sqs_queue" "sqs_java" {
 resource "aws_sqs_queue" "sqs_rust" {
     name = "sqs_rust"
 }
+resource "aws_sqs_queue" "sqs_java_snapstart" {
+    name = "sqs_java_snapstart"
+    visibility_timeout_seconds = 180
+}
 resource "aws_sns_topic" "image_notifications" {
     name = "image_notifications"
 }
@@ -19,7 +23,12 @@ resource "aws_sns_topic_subscription" "sub_sqs_rust" {
     endpoint             = aws_sqs_queue.sqs_rust.arn
     raw_message_delivery = true
 }
-
+resource "aws_sns_topic_subscription" "sub_sqs_java_snapstart" {
+    topic_arn            = aws_sns_topic.image_notifications.arn
+    protocol             = "sqs"
+    endpoint             = aws_sqs_queue.sqs_java_snapstart.arn
+    raw_message_delivery = true
+}
     
 resource "aws_sqs_queue_policy" "policy_sqs_java" {
     queue_url = aws_sqs_queue.sqs_java.id
@@ -51,6 +60,26 @@ resource "aws_sqs_queue_policy" "policy_sqs_rust" {
                 Principal = "*"
                 Action = "SQS:SendMessage"
                 Resource = aws_sqs_queue.sqs_rust.arn
+                Condition = {
+                    ArnEquals = {
+                        "aws:SourceArn" = aws_sns_topic.image_notifications.arn
+                    }
+                }
+            }
+        ]
+    })
+}
+
+resource "aws_sqs_queue_policy" "policy_sqs_java_snapstart" {
+    queue_url = aws_sqs_queue.sqs_java_snapstart.id
+    policy = jsonencode({
+        Version = "2012-10-17"
+        Statement = [
+            {
+                Effect = "Allow"
+                Principal = "*"
+                Action = "SQS:SendMessage"
+                Resource = aws_sqs_queue.sqs_java_snapstart.arn
                 Condition = {
                     ArnEquals = {
                         "aws:SourceArn" = aws_sns_topic.image_notifications.arn

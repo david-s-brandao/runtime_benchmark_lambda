@@ -20,3 +20,6 @@ __pycache__/
 # OS Files
 .DS_Store
 Thumbs.db
+.venv/
+.env/
+src/rust_processor/Cargo.toml

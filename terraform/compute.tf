@@ -10,6 +10,7 @@ resource "aws_lambda_function" "java_lambda" {
     tracing_config {
         mode = "Active"
     }
+    publish=false
     environment {
         variables = {
             BUCKET_IN  = aws_s3_bucket.images_in_bucket.bucket
@@ -30,6 +31,7 @@ resource "aws_lambda_function" "rust_lambda" {
     tracing_config {
         mode = "Active"
     }
+    publish=false
     environment {
         variables = {
             BUCKET_IN  = aws_s3_bucket.images_in_bucket.bucket
@@ -69,5 +71,30 @@ resource "aws_lambda_function" "logs_lambda" {
         variables = {
             LOGS_BUCKET = aws_s3_bucket.logs_bucket.bucket
         }
+    }
+}
+
+
+resource "aws_lambda_function" "java_snapstart_lambda" {
+    role = aws_iam_role.processor_role.arn
+    function_name = "java_function_snapstart"
+    filename = "../src/java_processor_snapstart/target/app.jar"
+    source_code_hash = filebase64sha256("../src/java_processor_snapstart/target/app.jar")
+    handler = "java_processor_snapstart.Main::handleRequest"
+    runtime = "java21"
+    timeout = 30
+    memory_size = 512
+    tracing_config {
+        mode = "Active"
+    }
+    environment {
+        variables = {
+            BUCKET_IN  = aws_s3_bucket.images_in_bucket.bucket
+            BUCKET_OUT = aws_s3_bucket.images_out_bucket.bucket
+        }
+    }
+    publish=true
+    snap_start {
+        apply_on = "PublishedVersions"
     }
 }

@@ -9,8 +9,8 @@ Traditional enterprise languages like Java rely on heavy JVMs, leading to severe
 Rust completely outperformed Java across all metrics in this sustained high-concurrency benchmark (~1,000+ invocations per function).
 
 - **Cold Starts:** Rust is 10x faster (175ms average vs. Java's 1,814ms).
-- **Memory Footprint:** Both functions were allocated an identical 512MB. Rust consumed only ~43MB of that budget versus Java's ~199MB — a 78% reduction driven purely by runtime efficiency, not configuration.
-- **Performance & Tail Latency:** Rust is consistently faster. Its median execution (p50) is twice as fast (254ms vs. 497ms), but the real difference is at scale — Java's p99 latency spikes to over 8 seconds, while Rust stays under 3.7 seconds even at extreme percentiles.
+- **Memory Footprint:** Both functions were allocated an identical 512MB. Rust consumed only ~43MB of that budget versus Java's ~199MB. This translated to a 78% reduction driven purely by runtime efficiency, not configuration.
+- **Performance & Tail Latency:** Rust is consistently faster. Its median execution (p50) is twice as fast (254ms vs. 497ms), but the real difference is at scale, Java's p99 latency spikes to over 8 seconds while Rust stays under 3.7 seconds even at extreme percentiles.
 - **Billing:** Rust generated 73% less total billed duration (399k ms vs. 1.49M ms).
 
 ## Architecture and Flow

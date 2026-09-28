@@ -1,79 +1,106 @@
 use aws_lambda_events::event::sqs::SqsEvent;
-use aws_sdk_s3::Client as S3Client;
-use aws_sdk_s3::primitives::ByteStream;
-use aws_sdk_xray::Client as XRayClient;
-use image::{GenericImageView, ImageFormat};
-use lambda_runtime::{run, service_fn, Error, LambdaEvent};
-use std::io::Cursor;
-use std::time::{SystemTime, UNIX_EPOCH};
+use aws_sdk_s3::{primitives::ByteStream, Client};
+use image::{imageops::FilterType, DynamicImage, GenericImageView};
+use jpeg_encoder::{ColorType, Encoder, EncodingError, SamplingFactor};
+use lambda_runtime::{service_fn, Error, LambdaEvent};
+use std::time::Instant;
+
+const SCALE_PERCENT: u32 = 70; // integer math: no float rounding differences
+const JPEG_QUALITY: u8 = 75;   // explicit, not the library default
+// Chroma subsampling is set explicitly too: the JDK writes 4:2:0 by default and
+// image::JpegEncoder cannot be configured, so encoding uses the jpeg-encoder crate.
+
+pub struct Timings {
+    pub decode_ms: f64,
+    pub resize_ms: f64,
+    pub encode_ms: f64,
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    tracing_subscriber::fmt().with_target(false).without_time().init();
-    let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
-    let s3 = S3Client::new(&config);
-    let xray = XRayClient::new(&config);
-    run(service_fn(move |event| handler(event, s3.clone(), xray.clone()))).await
-}
-
-async fn handler(event: LambdaEvent<SqsEvent>, s3: S3Client, xray: XRayClient) -> Result<(), Error> {
-    let bucket_in  = std::env::var("BUCKET_IN")?;
-    let bucket_out = std::env::var("BUCKET_OUT")?;
-
-    for record in event.payload.records {
-        let filename = record.body.unwrap_or_default();
-        tracing::info!("Processing: {}", filename);
-
-        let start = now_secs();
-
-        let image_data = s3.get_object()
-            .bucket(&bucket_in)
-            .key(&filename)
-            .send().await?
-            .body.collect().await?
-            .into_bytes();
-
-        let compressed = compress(image::load_from_memory(&image_data)?, 0.7);
-
-        let mut buf = Vec::new();
-        compressed.write_to(&mut Cursor::new(&mut buf), ImageFormat::Jpeg)?;
-
-        s3.put_object()
-            .bucket(&bucket_out)
-            .key(format!("Rust_lambda_{}", filename))
-            .body(ByteStream::from(buf))
-            .send().await?;
-
-        let end = now_secs();
-
-        // Directly put a trace segment — bypasses Sampled=0 from SQS trigger
-        let trace_id = format!("1-{:08x}-{:024x}", start as u32, ptr_entropy());
-        let segment_id = format!("{:016x}", ptr_entropy());
-        let doc = format!(
-            r#"{{"name":"rust_function","id":"{segment_id}","trace_id":"{trace_id}","start_time":{start:.3},"end_time":{end:.3},"annotations":{{"filename":"{filename}"}}}}"#
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() == 3 {
+        let input = std::fs::read(&args[1])?;
+        let (jpeg, t) = process(&input)?;
+        std::fs::write(&args[2], &jpeg)?;
+        println!(
+            "rust  decode={:.2}ms resize={:.2}ms encode={:.2}ms out={} bytes",
+            t.decode_ms, t.resize_ms, t.encode_ms, jpeg.len()
         );
-        let _ = xray.put_trace_segments()
-            .trace_segment_documents(doc)
-            .send().await;
-
-        tracing::info!("Done: {}", filename);
+        return Ok(());
     }
 
+    let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+    let s3 = Client::new(&config);
+    let bucket_in = std::env::var("BUCKET_IN")?;
+    let bucket_out = std::env::var("BUCKET_OUT")?;
+    lambda_runtime::run(service_fn(|event| {
+        handle_request(event, &s3, &bucket_in, &bucket_out)
+    }))
+    .await?;
     Ok(())
 }
 
-fn now_secs() -> f64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64()
+async fn handle_request(
+    event: LambdaEvent<SqsEvent>,
+    s3: &Client,
+    bucket_in: &str,
+    bucket_out: &str,
+) -> Result<(), Error> {
+    for record in event.payload.records {
+        let filename = record.body.ok_or("SQS message has no body")?;
+        let input = s3
+            .get_object()
+            .bucket(bucket_in)
+            .key(&filename)
+            .send()
+            .await?
+            .body
+            .collect()
+            .await?
+            .into_bytes();
+        let (jpeg, timings) = process(&input)?;
+        s3.put_object()
+            .bucket(bucket_out)
+            .key(format!("Rust_lambda_{filename}"))
+            .content_type("image/jpeg")
+            .body(ByteStream::from(jpeg))
+            .send()
+            .await?;
+        println!(
+            "Processed: {filename} decode={:.2}ms resize={:.2}ms encode={:.2}ms",
+            timings.decode_ms, timings.resize_ms, timings.encode_ms
+        );
+    }
+    Ok(())
 }
 
-// Cheap non-crypto entropy from pointer address
-fn ptr_entropy() -> u64 {
-    let x = Box::new(0u8);
-    let addr = &*x as *const u8 as u64;
-    addr.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407)
+pub fn process(input: &[u8]) -> Result<(Vec<u8>, Timings), Error> {
+    let t0 = Instant::now();
+    let src = image::load_from_memory(input)?;
+    let t1 = Instant::now();
+
+    let (w, h) = src.dimensions();
+    let resized = resize(&src, w * SCALE_PERCENT / 100, h * SCALE_PERCENT / 100);
+    let t2 = Instant::now();
+
+    let jpeg = encode_jpeg(&resized, JPEG_QUALITY)?;
+    let t3 = Instant::now();
+
+    let ms = |a: Instant, b: Instant| b.duration_since(a).as_secs_f64() * 1000.0;
+    Ok((jpeg, Timings { decode_ms: ms(t0, t1), resize_ms: ms(t1, t2), encode_ms: ms(t2, t3) }))
 }
 
-fn compress(img: image::DynamicImage, scale: f32) -> image::DynamicImage {
-    let (w, h) = img.dimensions();
-    img.resize((w as f32 * scale) as u32, (h as f32 * scale) as u32, image::imageops::FilterType::Lanczos3)
+fn resize(img: &DynamicImage, w: u32, h: u32) -> DynamicImage {
+    // resize_exact: same output dimensions as the Java side (no aspect-ratio fitting)
+    img.resize_exact(w, h, FilterType::Triangle)
+}
+
+fn encode_jpeg(img: &DynamicImage, quality: u8) -> Result<Vec<u8>, EncodingError> {
+    let rgb = img.to_rgb8();
+    let mut buf = Vec::new();
+    let mut enc = Encoder::new(&mut buf, quality);
+    enc.set_sampling_factor(SamplingFactor::R_4_2_0);
+    enc.encode(rgb.as_raw(), rgb.width() as u16, rgb.height() as u16, ColorType::Rgb)?;
+    Ok(buf)
 }
