@@ -33,6 +33,11 @@
       <artifactId>aws-xray-recorder-sdk-core</artifactId>
       <version>2.15.3</version>
     </dependency>
+    <dependency>
+      <groupId>org.crac</groupId>
+      <artifactId>crac</artifactId>
+      <version>1.4.0</version>
+    </dependency>
   </dependencies>
 
   <build>

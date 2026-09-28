@@ -22,6 +22,9 @@ run("make deploy", cwd=BASE / "src/rust_processor")
 print("==> Building Java processor...")
 run("mvn package -q", cwd=BASE / "src/java_processor")
 
+print("==> Building Java SnapStart processor...")
+run("mvn package -q", cwd=BASE / "src/java_processor_snapstart")
+
 print()
 answer = input("Deploy with Terraform? [y/N] ").strip().lower()
 if answer != "y":

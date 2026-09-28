@@ -16,6 +16,10 @@ echo "==> Building Java processor..."
 cd "$BASE_DIR/src/java_processor"
 mvn package -q
 
+echo "==> Building Java SnapStart processor..."
+cd "$BASE_DIR/src/java_processor_snapstart"
+mvn package -q
+
 echo ""
 read -rp "Deploy with Terraform? [y/N] " answer
 if [[ ! "$answer" =~ ^[Yy]$ ]]; then

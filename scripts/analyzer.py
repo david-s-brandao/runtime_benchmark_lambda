@@ -178,7 +178,48 @@ def get_xray_traces(function_name, start, end):
         kwargs["NextToken"] = token
     if not summaries:
         return {"trace_count": 0, "error_count": None, "fault_count": None,
+                "phase_ms_sampled": None,
                 "note": "No matching X-Ray traces; error/fault rates are unavailable."}
+    phases = {name: [] for name in ("download", "decode", "resize", "encode", "upload")}
+    # BatchGetTraces accepts up to five IDs. Subsegments can arrive as separate
+    # documents, so follow parent_id rather than inspecting only embedded ones.
+    trace_ids = list(dict.fromkeys(item["Id"] for item in summaries))
+    for offset in range(0, len(trace_ids), 5):
+        kwargs = {"TraceIds": trace_ids[offset:offset + 5]}
+        while True:
+            response = xray.batch_get_traces(**kwargs)
+            for trace in response.get("Traces", []):
+                nodes = []
+
+                def collect(node):
+                    nodes.append(node)
+                    for child in node.get("subsegments", []):
+                        collect(child)
+
+                for segment in trace.get("Segments", []):
+                    collect(json.loads(segment["Document"]))
+                children = defaultdict(list)
+                for node in nodes:
+                    children[node.get("parent_id")].append(node)
+                roots = [node for node in nodes if node.get("name") == function_name
+                         and node.get("origin") == "AWS::Lambda::Function"]
+                for root in roots:
+                    stack = list(children[root["id"]]) + root.get("subsegments", [])
+                    seen = set()
+                    while stack:
+                        node = stack.pop()
+                        if node.get("id") in seen:
+                            continue
+                        seen.add(node.get("id"))
+                        if node.get("name") in phases and "end_time" in node:
+                            phases[node["name"]].append(
+                                (node["end_time"] - node["start_time"]) * 1000)
+                        stack.extend(children[node.get("id")])
+                        stack.extend(node.get("subsegments", []))
+            token = response.get("NextToken")
+            if not token:
+                break
+            kwargs["NextToken"] = token
     return {
         "trace_count": len(summaries),
         "error_count": sum(1 for t in summaries if t.get("HasError")),
@@ -186,6 +227,8 @@ def get_xray_traces(function_name, start, end):
         "avg_response_time_ms": round(
             sum(t.get("ResponseTime", 0) for t in summaries) / len(summaries) * 1000, 2
         ),
+        "phase_ms_sampled": {name: {"count": len(samples), "stats": stats(samples)}
+                             for name, samples in phases.items()},
     }
 
 
@@ -219,6 +262,7 @@ def handler(event, context):
             "Cold/warm classification uses observed startup fields only; missing logs or a window boundary can hide startup time.",
             "Compare functions only after verifying identical successful image sets in a controlled window.",
             "BenchmarkStages measures S3 client creation, S3 get, image processing and S3 put; normal Java creates its S3 client during init, so its client_ms is zero.",
+            "X-Ray phase_ms_sampled includes only sampled traces and may lag recent invocations; it is not limited to successful images.",
         ],
         "functions": {},
     }

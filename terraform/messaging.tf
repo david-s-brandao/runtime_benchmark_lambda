@@ -1,12 +1,38 @@
 resource "aws_sqs_queue" "sqs_java" {
     name = "sqs_java"
+    visibility_timeout_seconds = 180
+    redrive_policy = jsonencode({
+        deadLetterTargetArn = aws_sqs_queue.dlq_java.arn
+        maxReceiveCount     = 5
+    })
 }
 resource "aws_sqs_queue" "sqs_rust" {
     name = "sqs_rust"
+    visibility_timeout_seconds = 180
+    redrive_policy = jsonencode({
+        deadLetterTargetArn = aws_sqs_queue.dlq_rust.arn
+        maxReceiveCount     = 5
+    })
 }
 resource "aws_sqs_queue" "sqs_java_snapstart" {
     name = "sqs_java_snapstart"
     visibility_timeout_seconds = 180
+    redrive_policy = jsonencode({
+        deadLetterTargetArn = aws_sqs_queue.dlq_java_snapstart.arn
+        maxReceiveCount     = 5
+    })
+}
+resource "aws_sqs_queue" "dlq_java" {
+    name                      = "sqs_java_dlq"
+    message_retention_seconds = 1209600
+}
+resource "aws_sqs_queue" "dlq_rust" {
+    name                      = "sqs_rust_dlq"
+    message_retention_seconds = 1209600
+}
+resource "aws_sqs_queue" "dlq_java_snapstart" {
+    name                      = "sqs_java_snapstart_dlq"
+    message_retention_seconds = 1209600
 }
 resource "aws_sns_topic" "image_notifications" {
     name = "image_notifications"

@@ -3,6 +3,8 @@ package java_processor;
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
 import com.amazonaws.services.lambda.runtime.events.SQSEvent;
+import com.amazonaws.xray.AWSXRay;
+import com.amazonaws.xray.entities.Subsegment;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
@@ -20,6 +22,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.concurrent.Callable;
 
 /**
  * Benchmark workload (Java side). Must stay functionally identical to processor.rs:
@@ -39,14 +42,14 @@ public final class Main implements RequestHandler<SQSEvent, Void> {
             String filename = message.getBody();
             try {
                 long t0 = System.nanoTime();
-                byte[] input = s3.getObjectAsBytes(GetObjectRequest.builder()
-                        .bucket(bucketIn).key(filename).build()).asByteArray();
+                byte[] input = traced("download", () -> s3.getObjectAsBytes(GetObjectRequest.builder()
+                        .bucket(bucketIn).key(filename).build()).asByteArray());
                 long t1 = System.nanoTime();
-                Result result = process(input);
+                Result result = process(input, true);
                 long t2 = System.nanoTime();
-                s3.putObject(PutObjectRequest.builder()
-                        .bucket(bucketOut).key("Java_lambda_" + filename)
-                        .contentType("image/jpeg").build(), RequestBody.fromBytes(result.jpeg()));
+                traced("upload", () -> s3.putObject(PutObjectRequest.builder()
+                        .bucket(bucketOut).key("Java_lambda_" + safeFilename(filename))
+                        .contentType("image/jpeg").build(), RequestBody.fromBytes(result.jpeg())));
                 long t3 = System.nanoTime();
                 context.getLogger().log("Processed: " + filename);
                 context.getLogger().log(String.format(java.util.Locale.ROOT,
@@ -63,17 +66,60 @@ public final class Main implements RequestHandler<SQSEvent, Void> {
     public record Timings(double decodeMs, double resizeMs, double encodeMs) {}
     public record Result(byte[] jpeg, Timings timings) {}
 
+    private static <T> T traced(String phase, Callable<T> work) throws Exception {
+        Subsegment segment = AWSXRay.beginSubsegment(phase);
+        try {
+            return work.call();
+        } catch (Exception e) {
+            segment.addException(e);
+            throw e;
+        } finally {
+            AWSXRay.endSubsegment();
+        }
+    }
+
+    private interface ImageWork<T> { T run() throws IOException; }
+
+    private static <T> T imagePhase(String phase, boolean trace, ImageWork<T> work) throws IOException {
+        if (!trace) return work.run();
+        Subsegment segment = AWSXRay.beginSubsegment(phase);
+        try {
+            return work.run();
+        } catch (IOException | RuntimeException e) {
+            segment.addException(e);
+            throw e;
+        } finally {
+            AWSXRay.endSubsegment();
+        }
+    }
+
+    static String safeFilename(String key) {
+        String name = Path.of(key).getFileName().toString();
+        if (name.isBlank() || name.equals(".") || name.equals("..") || name.contains("\\")) {
+            throw new IllegalArgumentException("Invalid image key: " + key);
+        }
+        return name;
+    }
+
     public static Result process(byte[] input) throws IOException {
+        return process(input, false);
+    }
+
+    private static Result process(byte[] input, boolean trace) throws IOException {
         long t0 = System.nanoTime();
-        BufferedImage src = ImageIO.read(new ByteArrayInputStream(input));
+        BufferedImage src = imagePhase("decode", trace, () -> {
+            BufferedImage decoded = ImageIO.read(new ByteArrayInputStream(input));
+            if (decoded == null) throw new IOException("Unsupported image format");
+            return decoded;
+        });
         long t1 = System.nanoTime();
 
-        BufferedImage resized = resize(src,
+        BufferedImage resized = imagePhase("resize", trace, () -> resize(src,
                 src.getWidth() * SCALE_PERCENT / 100,
-                src.getHeight() * SCALE_PERCENT / 100);
+                src.getHeight() * SCALE_PERCENT / 100));
         long t2 = System.nanoTime();
 
-        byte[] jpeg = encodeJpeg(resized, JPEG_QUALITY);
+        byte[] jpeg = imagePhase("encode", trace, () -> encodeJpeg(resized, JPEG_QUALITY));
         long t3 = System.nanoTime();
 
         return new Result(jpeg, new Timings((t1 - t0) / 1e6, (t2 - t1) / 1e6, (t3 - t2) / 1e6));
