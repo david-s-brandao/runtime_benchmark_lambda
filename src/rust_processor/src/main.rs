@@ -241,7 +241,24 @@ fn encode_jpeg(img: &DynamicImage, quality: u8) -> Result<Vec<u8>, EncodingError
 
 #[cfg(test)]
 mod tests {
-    use super::XRayTrace;
+    use super::{encode_jpeg, process, process_traced, XRayTrace};
+    use image::{DynamicImage, GenericImageView, ImageBuffer, Rgb};
+
+    #[test]
+    fn process_resizes_to_seventy_percent() {
+        let source = DynamicImage::ImageRgb8(ImageBuffer::from_pixel(13, 11, Rgb([40, 80, 120])));
+        let jpeg = encode_jpeg(&source, 75).unwrap();
+
+        let (output, _) = process(&jpeg).unwrap();
+        let decoded = image::load_from_memory(&output).unwrap();
+        assert_eq!(decoded.dimensions(), (9, 7));
+    }
+
+    #[test]
+    fn process_rejects_invalid_image() {
+        assert!(process(b"not an image").is_err());
+        assert!(process_traced(b"not an image", None).is_err());
+    }
 
     #[test]
     fn only_sampled_headers_with_valid_parent_ids_emit_subsegments() {
