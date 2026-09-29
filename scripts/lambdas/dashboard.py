@@ -1,6 +1,6 @@
 """Validate an analyzer daily report and render a set of benchmark PNGs.
 
-Run from anywhere: python scripts/dashboard.py [--report reports/FILE.json]
+Run from anywhere: python scripts/lambdas/dashboard.py [--report reports/FILE.json]
 Requires matplotlib (pip install matplotlib). No AWS access is needed.
 """
 
@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import StrMethodFormatter
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 QUANTILES = ("min", "avg", "p50", "p95", "p99", "max")
 STAGES = ("client_ms", "get_ms", "process_ms", "put_ms")
 NAMES = {

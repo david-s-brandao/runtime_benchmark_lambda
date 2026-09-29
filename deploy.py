@@ -12,7 +12,7 @@ def run(cmd, cwd):
         sys.exit(result.returncode)
 
 print("==> Building Python Lambda zips...")
-scripts = BASE / "scripts"
+scripts = BASE / "scripts/lambdas"
 run("zip -j producer.zip producer.py", cwd=scripts)
 run("zip -j analyzer.zip analyzer.py", cwd=scripts)
 

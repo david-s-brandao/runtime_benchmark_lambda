@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.dashboard import ROOT, render, validate_report
+from scripts.lambdas.dashboard import ROOT, render, validate_report
 
 
 class DashboardTests(unittest.TestCase):

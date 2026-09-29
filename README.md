@@ -23,14 +23,12 @@ Rust had approximately **5.3× lower average startup-inclusive Lambda latency** 
 
 ![SNS fanout to three SQS queues and Lambda image processors](images/architecture_diagram.png)
 
-> **About X-Ray in the diagram:** The architecture includes X-Ray because tracing is configured for the processors, but it was **not used for the results shown here**. The analyzer found **zero matching X-Ray traces** for all three functions in this report's time window, so there were no trace-based phase timings or error rates to compare. The dashboards instead use CloudWatch log metrics. The report does not establish why no traces matched; zero matching traces should not be read as zero errors or as proof that tracing was disabled.
-
 1. The producer lists the **100 objects** in the input S3 bucket and publishes each key to an SNS topic. EventBridge schedules this every 30 minutes (UTC); the producer also rejects an input bucket that does not contain exactly 100 objects.
 2. SNS fans out to **three separate SQS queues**, one for each configuration. SQS event source mappings use batch size `1` and maximum concurrency `100` per mapping. Queue delivery and retries are asynchronous; messages are *not* guaranteed to begin processing at the same millisecond.
 3. Each handler downloads an image, decodes it, resizes it to **70% of the original width and height** (e.g. 800×600 → 560×420) with bilinear-family interpolation, JPEG-encodes at **quality 75**, and uploads to its own output key prefix.
 4. The analyzer groups CloudWatch log records by function and **published version**, counts observed successful writes, and aggregates log timings. The results and charts here use those log-derived metrics.
 
-All three Lambda functions have **512 MB allocated memory** and a 30-second timeout in Terraform. Java and Rust use `$LATEST`; the SnapStart function publishes a version and its SQS mapping targets the **qualified version ARN** (version `7` in this report). Ordinary Java does not enable SnapStart. See [Terraform compute](terraform/compute.tf), [event sources](terraform/monitoring.tf), [fanout](terraform/messaging.tf), and the [analyzer](scripts/analyzer.py).
+All three Lambda functions have **512 MB allocated memory** and a 30-second timeout in Terraform. Java and Rust use `$LATEST`; the SnapStart function publishes a version and its SQS mapping targets the **qualified version ARN** (version `7` in this report). Ordinary Java does not enable SnapStart. See [Terraform compute](terraform/compute.tf), [event sources](terraform/monitoring.tf), [fanout](terraform/messaging.tf), and the [analyzer](scripts/lambdas/analyzer.py).
 
 ### Same intent, not identical execution
 
@@ -40,6 +38,8 @@ The report confirms **100 distinct processed keys per configuration**, but does 
 
 <p align="center">
   <img src="images/original_images/image_10.jpg" width="23%" alt="Original image 10">
+  <p align="center"><em>Original</em></p>
+  <p align="center">
   <img src="images/processed_images/Java_lambda_image_10.jpg" width="23%" alt="Java 21 output for image 10">
   <img src="images/processed_images/Rust_lambda_image_10.jpg" width="23%" alt="Rust output for image 10">
   <img src="images/processed_images/Java_snapstart_lambda_image_10.jpg" width="23%" alt="Java 21 SnapStart output for image 10">
@@ -48,7 +48,7 @@ The report confirms **100 distinct processed keys per configuration**, but does 
 
 ## Dashboard gallery and measured results
 
-Every dashboard below is generated from the [same checked-in report](reports/20260929T082758Z_daily_report.json). The charts show **aggregates**, not time series or raw latency distributions. The [dashboard script](scripts/dashboard.py) checks report structure, numeric ranges and count consistency before rendering; it cannot verify information the report does not contain.
+Every dashboard below is generated from the [same checked-in report](reports/20260929T082758Z_daily_report.json). The charts show **aggregates**, not time series or raw latency distributions. The [dashboard script](scripts/lambdas/dashboard.py) checks report structure, numeric ranges and count consistency before rendering; it cannot verify information the report does not contain.
 
 ### Latency: duration vs. startup-inclusive time
 
@@ -119,19 +119,45 @@ The logged **cold S3 get** stage dominates the Java cold-path stage averages. `c
 
 ## Repository layout
 
+This tree focuses on the files needed to understand and reproduce the benchmark. Generated build artifacts and individual images are grouped rather than listed one by one.
+
 ```text
-terraform/                   AWS fanout, queues, Lambdas and schedules
-src/java_processor/          Java 21 handler (no SnapStart)
-src/java_processor_snapstart/ Java 21 handler with SnapStart restore hook
-src/rust_processor/          Rust handler
-scripts/producer.py          Publishes input keys to SNS
-scripts/analyzer.py          Generates version-split daily JSON reports
-scripts/dashboard.py         Validates reports and renders six PNGs
-reports/                     Example analyzer output
-images/                      Architecture, dashboards and image examples
+runtime_benchmark_lambda/
+├── README.md                         This guide
+├── deploy.py                         Build packages and plan Terraform
+├── terraform/                        AWS infrastructure
+│   ├── provider.tf                   Region and provider
+│   ├── compute.tf                    Three processors + producer + analyzer
+│   ├── messaging.tf                  SNS fanout, SQS queues and DLQs
+│   ├── monitoring.tf                 EventBridge schedules and SQS triggers
+│   ├── iam.tf                        Execution roles and permissions
+│   └── s3.tf                         Input, output and report buckets
+├── src/                              Image processors
+│   ├── java_processor/               Java 21 (Maven)
+│   ├── java_processor_snapstart/     Java 21 + SnapStart (Maven)
+│   └── rust_processor/               Rust (Cargo + Makefile)
+├── scripts/
+│   ├── lambdas/
+│   │   ├── producer.py                Publish input image keys to SNS
+│   │   ├── analyzer.py                Produce JSON metrics from logs
+│   │   └── dashboard.py               Validate report and create six PNGs
+│   └── helpers/
+│       ├── fetch_images.py            Download seeded input images
+│       ├── test_analyzer.py           Analyzer tests
+│       └── test_dashboard.py          Dashboard tests
+├── reports/
+│   └── 20260929T082758Z_daily_report.json  Benchmark data in this guide
+└── images/
+    ├── architecture_diagram.png      SNS → SQS → Lambda flow
+    ├── benchmark_*.png               Six report dashboards
+    ├── GALLERY.md                    Output comparisons
+    ├── original_images/              Input JPEGs
+    └── processed_images/             Three processors' outputs
 ```
 
-The Java handlers use Maven and a managed runtime; Rust uses Cargo and `provided.al2023`. See the [ordinary Java](src/java_processor/src/main/java/java_processor/Main.java), [SnapStart Java](src/java_processor_snapstart/src/main/java/java_processor_snapstart/Main.java), and [Rust](src/rust_processor/src/main.rs) implementations for actual handler logic and dependency choices rather than simplified pseudocode.
+**Quick links:** [infrastructure](terraform/) · [ordinary Java handler](src/java_processor/src/main/java/java_processor/Main.java) · [SnapStart handler](src/java_processor_snapstart/src/main/java/java_processor_snapstart/Main.java) · [Rust handler](src/rust_processor/src/main.rs) · [producer](scripts/lambdas/producer.py) · [analyzer](scripts/lambdas/analyzer.py) · [dashboard](scripts/lambdas/dashboard.py) · [input generator](scripts/helpers/fetch_images.py) · [report](reports/20260929T082758Z_daily_report.json) · [image gallery](images/GALLERY.md).
+
+The Java handlers use Maven and a managed runtime; Rust uses Cargo and `provided.al2023`. Open their source links above for the actual handler logic and dependencies.
 
 ## Reproduce the charts
 
@@ -139,8 +165,8 @@ You can render the checked-in report **without AWS credentials**:
 
 ```bash
 python -m pip install matplotlib
-python scripts/dashboard.py --report reports/20260929T082758Z_daily_report.json
-python -m unittest scripts.test_dashboard
+python scripts/lambdas/dashboard.py --report reports/20260929T082758Z_daily_report.json
+python -m unittest scripts.helpers.test_dashboard
 ```
 
 The command validates the report and writes `images/benchmark_{overview,latency,startup,stages,workload,resources}.png`. Omit `--report` to use the latest filename matching `reports/*_daily_report.json`, or use `--output-dir` to save PNGs elsewhere. Missing Rust stage timings remain unavailable instead of being silently plotted as zero.
@@ -153,10 +179,10 @@ The command validates the report and writes `images/benchmark_{overview,latency,
 
    ```bash
    python -m pip install aiohttp
-   python scripts/fetch_images.py
+   python scripts/helpers/fetch_images.py
    ```
 
-2. Build the three processors and supporting Lambdas with `./deploy.sh` (Linux/macOS) or `python deploy.py`. Both prompt for bucket names and run **`terraform plan` only**. Review the plan and run `terraform apply` yourself in `terraform/` with the same bucket variables. The input bucket must contain exactly 100 objects before running the producer; for example:
+2. Build the three processors and supporting Lambdas with `python deploy.py`. It prompts for bucket names and runs **`terraform plan` only**. Review the plan and run `terraform apply` yourself in `terraform/` with the same bucket variables. The input bucket must contain exactly 100 objects before running the producer; for example:
 
    ```bash
    aws s3 sync images/original_images/ s3://<INPUT_BUCKET>/ --region us-east-1
@@ -170,7 +196,7 @@ The command validates the report and writes `images/benchmark_{overview,latency,
      --cli-binary-format raw-in-base64-out --region us-east-1 response.json
    aws s3 sync s3://<LOGS_BUCKET>/reports/ reports/ \
      --exclude '*' --include '*_daily_report.json' --region us-east-1
-   python scripts/dashboard.py
+   python scripts/lambdas/dashboard.py
    ```
 
    Replace the example timestamps with **your own** completed test window. Verify the same successful S3 key set for all three functions independently before treating the runtime comparison as controlled.

@@ -7,9 +7,6 @@ resource "aws_lambda_function" "java_lambda" {
     runtime = "java21"
     timeout = 30
     memory_size = 512
-    tracing_config {
-        mode = "Active"
-    }
     publish=false
     environment {
         variables = {
@@ -28,9 +25,6 @@ resource "aws_lambda_function" "rust_lambda" {
     runtime = "provided.al2023"
     timeout = 30
     memory_size = 512
-    tracing_config {
-        mode = "Active"
-    }
     publish=false
     environment {
         variables = {
@@ -44,8 +38,8 @@ resource "aws_lambda_function" "rust_lambda" {
 resource "aws_lambda_function" "noti_lambda" {
     role = aws_iam_role.noti_role.arn
     function_name = "noti_lambda"
-    filename = "../scripts/producer.zip"
-    source_code_hash = filebase64sha256("../scripts/producer.zip")
+    filename = "../scripts/lambdas/producer.zip"
+    source_code_hash = filebase64sha256("../scripts/lambdas/producer.zip")
     handler = "producer.handler"
     runtime = "python3.12"
     timeout = 60
@@ -62,8 +56,8 @@ resource "aws_lambda_function" "noti_lambda" {
 resource "aws_lambda_function" "logs_lambda" {
     role = aws_iam_role.logs_role.arn
     function_name = "logs_lambda"
-    filename = "../scripts/analyzer.zip"
-    source_code_hash = filebase64sha256("../scripts/analyzer.zip")
+    filename = "../scripts/lambdas/analyzer.zip"
+    source_code_hash = filebase64sha256("../scripts/lambdas/analyzer.zip")
     handler = "analyzer.handler"
     runtime = "python3.12"
     timeout = 60
@@ -84,9 +78,6 @@ resource "aws_lambda_function" "java_snapstart_lambda" {
     runtime = "java21"
     timeout = 30
     memory_size = 512
-    tracing_config {
-        mode = "Active"
-    }
     environment {
         variables = {
             BUCKET_IN  = aws_s3_bucket.images_in_bucket.bucket
