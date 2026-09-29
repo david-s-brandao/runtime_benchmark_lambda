@@ -21,7 +21,7 @@ Rust had approximately **5.3× lower average startup-inclusive Lambda latency** 
 
 ## Architecture and workload
 
-![SNS fanout to three SQS queues and Lambda image processors](images/architecture-diagram.png)
+![SNS fanout to three SQS queues and Lambda image processors](images/architecture_diagram.png)
 
 > **About X-Ray in the diagram:** The architecture includes X-Ray because tracing is configured for the processors, but it was **not used for the results shown here**. The analyzer found **zero matching X-Ray traces** for all three functions in this report's time window, so there were no trace-based phase timings or error rates to compare. The dashboards instead use CloudWatch log metrics. The report does not establish why no traces matched; zero matching traces should not be read as zero errors or as proof that tracing was disabled.
 
