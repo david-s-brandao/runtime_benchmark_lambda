@@ -1,277 +1,176 @@
 # Serverless Image Processing Benchmark
 
-FinOps is no longer just about cost monitoring; it is about architectural efficiency. While AWS Lambda provides a highly scalable serverless execution model, the choice of runtime language introduces significant, often hidden, financial and performance trade-offs at scale.
+**Java 21 vs. Rust vs. Java 21 with SnapStart**, processing images through the same SNS → SQS → AWS Lambda architecture. This is a measured comparison of *these implementations in this run*, not a universal ranking of runtimes or an AWS pricing study.
 
-Traditional enterprise languages like Java rely on heavy JVMs, leading to severe cold starts and inflated memory billing. In contrast, systems languages like Rust promise bare-metal performance with a minimal footprint. This benchmark exposes the exact infrastructure, latency, and cost multipliers when running an event-driven architecture (SQS & Lambda) using Java 21 versus Rust.
+> **Report:** [2026-09-29 daily report](reports/20260929T082758Z_daily_report.json) · Window: **2026-09-28 22:30 to 2026-09-29 08:27:58 UTC** · 2,000 observed attempts per configuration, 2,000 successful invocations each, 100 distinct processed S3 keys each. The report contains aggregate statistics, not individual invocation records.
 
-## TL;DR
+## At a glance
 
-Rust completely outperformed Java across all metrics in this sustained high-concurrency benchmark (~1,000+ invocations per function).
+| Metric | Java 21 (`$LATEST`) | Rust (`$LATEST`) | Java 21 + SnapStart (version `7`) |
+|:--|--:|--:|--:|
+| Avg Lambda latency incl. observed startup | 1,035.61 ms | **196.91 ms** | 1,090.21 ms |
+| p99 Lambda latency incl. observed startup | 7,792.73 ms | **780.44 ms** | 8,135.91 ms |
+| Avg observed cold-invocation latency | 7,425.57 ms | **740.03 ms** | 7,842.01 ms |
+| Avg observed warm-invocation latency | 449.63 ms | **164.39 ms** | 467.03 ms |
+| Avg memory **used** (not allocated) | 202.13 MB | **45.25 MB** | 202.49 MB |
+| Avg billed duration, successful only | 1,036.11 ms | **197.39 ms** | 1,057.04 ms |
 
-- **Cold Starts:** Rust is 10x faster (175ms average vs. Java's 1,814ms).
-- **Memory Footprint:** Both functions were allocated an identical 512MB. Rust consumed only ~43MB of that budget versus Java's ~199MB. This translated to a 78% reduction driven purely by runtime efficiency, not configuration.
-- **Performance & Tail Latency:** Rust is consistently faster. Its median execution (p50) is twice as fast (254ms vs. 497ms), but the real difference is at scale, Java's p99 latency spikes to over 8 seconds while Rust stays under 3.7 seconds even at extreme percentiles.
-- **Billing:** Rust generated 73% less total billed duration (399k ms vs. 1.49M ms).
+Rust had approximately **5.3× lower average startup-inclusive Lambda latency** and **10× lower p99** than ordinary Java in this window. The SnapStart configuration did **not** improve Java's observed latency here: average startup-inclusive latency was **5.3% higher** than ordinary Java's. These are descriptive results, not proof that SnapStart generally makes Java slower.
 
-## Architecture and Flow
+![Comparison of average/p99 latency, peak memory and average billed duration across the three configurations](images/benchmark_overview.png)
 
-The benchmark simulates a real-world, event-driven image processing pipeline. To ensure absolute fairness, the architecture employs a Fanout pattern, guaranteeing both languages receive the exact same workload at the exact same millisecond.
+## Architecture and workload
 
-<br>
+![SNS fanout to three SQS queues and Lambda image processors](images/architecture-diagram.png)
+
+> **About X-Ray in the diagram:** The architecture includes X-Ray because tracing is configured for the processors, but it was **not used for the results shown here**. The analyzer found **zero matching X-Ray traces** for all three functions in this report's time window, so there were no trace-based phase timings or error rates to compare. The dashboards instead use CloudWatch log metrics. The report does not establish why no traces matched; zero matching traces should not be read as zero errors or as proof that tracing was disabled.
+
+1. The producer lists the **100 objects** in the input S3 bucket and publishes each key to an SNS topic. EventBridge schedules this every 30 minutes (UTC); the producer also rejects an input bucket that does not contain exactly 100 objects.
+2. SNS fans out to **three separate SQS queues**, one for each configuration. SQS event source mappings use batch size `1` and maximum concurrency `100` per mapping. Queue delivery and retries are asynchronous; messages are *not* guaranteed to begin processing at the same millisecond.
+3. Each handler downloads an image, decodes it, resizes it to **70% of the original width and height** (e.g. 800×600 → 560×420) with bilinear-family interpolation, JPEG-encodes at **quality 75**, and uploads to its own output key prefix.
+4. The analyzer groups CloudWatch log records by function and **published version**, counts observed successful writes, and aggregates log timings. The results and charts here use those log-derived metrics.
+
+All three Lambda functions have **512 MB allocated memory** and a 30-second timeout in Terraform. Java and Rust use `$LATEST`; the SnapStart function publishes a version and its SQS mapping targets the **qualified version ARN** (version `7` in this report). Ordinary Java does not enable SnapStart. See [Terraform compute](terraform/compute.tf), [event sources](terraform/monitoring.tf), [fanout](terraform/messaging.tf), and the [analyzer](scripts/analyzer.py).
+
+### Same intent, not identical execution
+
+The workload is **mostly similar, but the processes may differ**. The three handlers aim for the same input keys, dimensions, interpolation family, JPEG quality and 4:2:0 subsampling. But Java uses `ImageIO`/`Graphics2D`, while Rust uses the `image` and `jpeg-encoder` crates; their decoders, resamplers, encoders, thread behavior and S3 SDKs need not perform identical work or produce byte-identical JPEGs. The ordinary Java handler creates its S3 client during initialization; the SnapStart variant recreates it after restore; Rust creates its S3 client at runtime startup. That is part of the measured implementation, not a controlled single-variable runtime experiment.
+
+The report confirms **100 distinct processed keys per configuration**, but does not include the actual successful key sets. Equal counts cannot establish identical sets or an end-to-end delivery guarantee. Retries are included in attempt counts; do not treat the three rows as paired per-image samples. A [visual gallery of output examples](images/GALLERY.md) is available, but visual similarity is not a pixel/byte-level equivalence test.
+
 <p align="center">
-  <img src="images/architecture_diagram.png" width="90%" alt="AWS Event-Driven Architecture">
+  <img src="images/original_images/image_10.jpg" width="23%" alt="Original image 10">
+  <img src="images/processed_images/Java_lambda_image_10.jpg" width="23%" alt="Java 21 output for image 10">
+  <img src="images/processed_images/Rust_lambda_image_10.jpg" width="23%" alt="Rust output for image 10">
+  <img src="images/processed_images/Java_snapstart_lambda_image_10.jpg" width="23%" alt="Java 21 SnapStart output for image 10">
 </p>
-<br>
+<p align="center"><em>Original · Java 21 · Rust · Java 21 + SnapStart (image 10)</em></p>
 
-<details>
-<summary><b>Mermaid Source (Docs-as-Code)</b></summary>
+## Dashboard gallery and measured results
 
-```mermaid
-graph LR
-    EB[EventBridge Cron] -->|30m Trigger| NL(Notification Lambda)
-    NL -->|Publishes 100 Events| SNS{SNS Topic Fanout}
-    
-    SNS -->|Sub| SQS_J[SQS Queue Java]
-    SNS -->|Sub| SQS_R[SQS Queue Rust]
-    
-    SQS_J -->|Batch Size 1| L_J(Java 21 Lambda)
-    SQS_R -->|Batch Size 1| L_R(Rust Lambda)
-    
-    L_J -->|Saves Processed Image| S3_Out[(S3 Output Bucket)]
-    L_R -->|Saves Processed Image| S3_Out
-    
-    L_J -.->|Writes Telemetry| CW[CloudWatch Logs & X-Ray]
-    L_R -.->|Writes Telemetry| CW
-    
-    LL(Logs Lambda) -.->|Fetches Metrics Daily| CW
-    LL -.->|Saves JSON Report| S3_Out
-```
-</details>
+Every dashboard below is generated from the [same checked-in report](reports/20260929T082758Z_daily_report.json). The charts show **aggregates**, not time series or raw latency distributions. The [dashboard script](scripts/dashboard.py) checks report structure, numeric ranges and count consistency before rendering; it cannot verify information the report does not contain.
 
+### Latency: duration vs. startup-inclusive time
 
-### The Workload
+![p50, p95 and p99 of duration, startup-inclusive latency, observed cold latency and observed warm latency](images/benchmark_latency.png)
 
-- **Trigger:** Batches of 100 image processing events are dispatched to the Lambda functions every 30 minutes. This interval intentionally forces periodic environment destruction, ensuring a reliable cold start measurement alongside concurrent warm executions.
-- **Processing:** Upon invocation, the functions execute CPU-intensive tasks to download the image, apply a 70% compression algorithm, and upload the result back to S3.
+| Metric (ms; successful invocations) | Java 21 | Rust | Java + SnapStart |
+|:--|--:|--:|--:|
+| Execution duration avg | 898.19 | 188.51 | 944.48 |
+| Execution duration p50 / p99 | 441.91 / 6,158.17 | 165.00 / 634.05 | 454.05 / 6,300.40 |
+| Lambda latency incl. observed startup avg | 1,035.61 | 196.91 | 1,090.21 |
+| Lambda latency incl. observed startup p50 / p99 | 441.91 / 7,792.73 | 165.00 / 780.44 | 454.05 / 8,135.91 |
+| Observed warm invocation avg / p99 | 449.63 / 674.54 | 164.39 / 281.42 | 467.03 / 671.38 |
+| Observed cold invocation avg / p99 | 7,425.57 / 8,029.36 | 740.03 / 845.69 | 7,842.01 / 8,524.74 |
 
-<br>
-<p align="center">
-  <b>Original Image (800x600)</b><br>
-  <img src="images/original_images/image_10.jpg" width="55%" alt="Original Image">
-</p>
-<p align="center">
-  <img src="images/processed_images/Java_lambda_image_10.jpg" width="45%" alt="Java Processed Image">
-  <img src="images/processed_images/Rust_lambda_image_10.jpg" width="45%" alt="Rust Processed Image">
-  <br>
-  <i>Left: Java 21 Output (70%) &nbsp;&nbsp; | &nbsp;&nbsp; Right: Rust Output (70%)</i>
-</p>
+**Definitions:** execution duration is the Lambda `Duration` for successful invocations. Startup-inclusive latency adds **observed** Init Duration or Restore Duration to Duration where the logs provide it. It **excludes SQS queue wait and SNS delivery**. Cold/warm classification is based on observed startup fields, not a guarantee that every actual startup was captured. The `p99` of a combined distribution cannot be reconstructed by summing separate p99 values.
 
-> **Note:** See the [Full Image Gallery](images/GALLERY.md) for a side-by-side visual comparison of all 100 processed samples, proving deterministic execution across both runtimes.
+### Startup: why SnapStart was a surprise
 
-<br>
+![Observed init, restore, startup counts and cold-invocation latency](images/benchmark_startup.png)
 
-## Detailed Results
+While writing the first version of this project, I came across **Lambda SnapStart** and thought it was a natural fit for the Java cold-start problem. Or so I thought: **in this run, it was worse** than regular Java on the measures that matter to an invocation.
 
-<br>
-<p align="center">
-  <img src="images/benchmark_overview.png" alt="Benchmark Metrics Overview">
-</p>
-<br>
+| Observed startup metric | Java 21 | Rust | Java + SnapStart |
+|:--|--:|--:|--:|
+| Invocations with observed startup / 2,000 successful | 168 (8.4%) | 113 (5.7%) | 169 (8.45%) |
+| Init Duration avg | 1,635.91 ms | 148.61 ms | N/A |
+| Restore Duration avg | N/A | N/A | 1,724.68 ms |
+| Cold invocation latency avg | 7,425.57 ms | 740.03 ms | 7,842.01 ms |
+| Cold invocation latency p99 | 8,029.36 ms | 845.69 ms | 8,524.74 ms |
 
-### 1. Cold Starts (Init Duration)
+**Init and restore are different measurements:** SnapStart restore is not ordinary Java initialization. Among successful invocations with observed startup, SnapStart's **full cold invocation** averaged about **416 ms longer** than ordinary Java's. Its overall average Lambda latency was about **55 ms higher** (1,090.21 vs. 1,035.61 ms), its p99 about **343 ms higher**, and its successful billed-duration total **2.0% higher**. The cold cohorts are different observations, not matched pairs. The logs alone cannot attribute the difference to SnapStart itself: post-restore client setup, S3/network variability, concurrency, and different execution paths may all matter. This result is a reason to benchmark the **whole request path** in your own workload, not a claim that SnapStart is universally slower.
 
-| Metric | Java 21 | Rust |
-|--------|---------|------|
-| **Cold Start Count** | 116 (11.3%) | 96 (9.4%) |
-| **Average** | 1814.78 ms | 175.26 ms |
-| **p50 (Median)** | 1770.93 ms | 171.88 ms |
-| **p90** | 2065.62 ms | 198.07 ms |
-| **p99** | 2368.75 ms | 253.64 ms |
-| **Maximum** | 2395.67 ms | 253.64 ms |
+### Where the Java time went
 
-### 2. Warm Starts (Total Execution Duration)
+![Average and p99 logged processing stages for ordinary Java and SnapStart Java, split by observed cold and warm invocations](images/benchmark_stages.png)
 
-| Metric | Java 21 | Rust |
-|--------|---------|------|
-| **Average** | 1248.19 ms | 370.44 ms |
-| **p50 (Median)** | 497.15 ms | 254.23 ms |
-| **p90** | 4618.30 ms | 605.34 ms |
-| **p99** | 8229.60 ms | 3691.89 ms |
-| **Maximum** | 15955.58 ms | 6766.31 ms |
+| Average logged stage (ms) | Java cold | Java warm | SnapStart cold | SnapStart warm |
+|:--|--:|--:|--:|--:|
+| S3 client | 0.00 | 0.00 | 0.00 | 0.00 |
+| S3 get | 4,612.09 | 51.07 | 4,862.16 | 50.86 |
+| Image processing | 792.11 | 333.63 | 843.50 | 351.13 |
+| S3 put | 359.51 | 62.58 | 376.21 | 62.70 |
 
-### 3. Memory Usage (Peak)
+The logged **cold S3 get** stage dominates the Java cold-path stage averages. `client_ms=0` for ordinary Java because its client is created during init, outside these per-invocation stages; SnapStart's near-zero logged value does not imply that restoring or rebuilding the client is free. These are per-stage aggregates of *available stage logs*, not a decomposition that can be summed into the reported average invocation latency. **Rust does not emit `BenchmarkStages` in this report**; its stage data is unavailable, not zero.
 
-| Metric | Java 21 | Rust |
-|--------|---------|------|
-| **Average** | ~198.39 MB | ~43.79 MB |
-| **Maximum** | ~209.00 MB | ~45.00 MB |
+### Delivery, memory and billing
 
-*Both functions were allocated 512MB. Rust naturally consumed ~4.5x less memory — a direct reduction in GB-second billing with zero tuning required.*
+![Successful invocations, failed or unconfirmed invocations, unique S3 keys and total billed duration](images/benchmark_workload.png)
 
-### 4. Cost Projection
+![Average and p99 memory used, successful billed total and invocation attempts](images/benchmark_resources.png)
 
-Based on AWS Lambda pricing (`us-east-1`, x86_64: $0.0000166667 per GB-second) and the observed billed duration delta from this benchmark, the following table projects monthly cost at scale. Memory is normalized to the 512MB allocation used for both functions.
+| Metric | Java 21 | Rust | Java + SnapStart |
+|:--|--:|--:|--:|
+| Attempts / successful / failed or unconfirmed | 2,000 / 2,000 / 0 | 2,000 / 2,000 / 0 | 2,000 / 2,000 / 0 |
+| Unique processed S3 keys | 100 | 100 | 100 |
+| Memory used avg / p99 / peak | 202.13 / 209 / 211 MB | 45.25 / 46 / 46 MB | 202.49 / 209 / 210 MB |
+| Billed duration avg, successful only | 1,036.11 ms | 197.39 ms | 1,057.04 ms |
+| Billed duration total, all attempts | 2,072,226 ms | 394,787 ms | 2,114,088 ms |
 
-| Monthly Invocations | Java 21 Est. Cost | Rust Est. Cost | Monthly Savings |
-|---------------------|-------------------|----------------|-----------------|
-| 100,000 | ~$0.71 | ~$0.19 | ~$0.52 |
-| 1,000,000 | ~$7.10 | ~$1.90 | ~$5.20 |
-| 10,000,000 | ~$71.00 | ~$19.00 | ~$52.00 |
-| 100,000,000 | ~$710.00 | ~$190.00 | ~$520.00 |
+**Billing is based on allocated memory (512 MB), not on observed memory used.** Lower used memory does not itself reduce Lambda GB-second charges at the same allocation. The billed-duration totals are measured runtime inputs, **not dollar costs**; a real cost estimate also needs applicable regional rates, request charges, free tiers and any SnapStart-related charges. Failure counts above come from the analyzer's observed log-based classification.
 
-## Environment & Methodology
+## Methodology and limitations
 
-Both functions were subjected to the exact same AWS environment constraints and IaC configurations:
+- **Window and versions matter.** The report spans nearly ten hours; Java/Rust use `$LATEST`, while SnapStart uses published version `7`. Do not merge metrics across versions or compare to the previous README's older run.
+- **Successful-only metrics.** Duration, startup-inclusive latency, billed averages, stage timings and memory summaries exclude failed or unconfirmed invocations; `billed_ms_all_attempts_total` includes all logged attempts. An S3 `Processed:` log line and no detected failure mark success in the analyzer; this does not prove end-to-end delivery.
+- **Startup observation is incomplete by design.** Cold/warm labels depend on visible init/restore fields. Missing log events and window boundaries can hide startup. Repeated 30-minute dispatches may encourage cold starts but do not guarantee environment recycling.
+- **Comparable inputs are not identical compute.** Library implementations, S3 access, async vs. sync SDKs and SnapStart restore hooks differ; this is a full-handler comparison, not an isolated CPU or runtime microbenchmark. The input set contains 800×600 JPEGs; results may differ for other sizes, formats and traffic patterns.
 
-- **Region:** `us-east-1`
-- **Architecture:** `x86_64`
-- **Allocated Memory:** 512 MB per function — identical for both. Memory consumption differences reflect runtime behavior, not configuration.
-- **Concurrency Limit:** Unreserved (-1) to allow free horizontal scaling.
-- **Event Source Mapping:** SQS Batch Size set to `1` to force maximum concurrency.
-- **Runtimes:** Java 21 (Managed Runtime) vs. Rust (Edition 2021 on `provided.al2023` Custom Runtime).
-- **SnapStart:** Explicitly disabled for Java.
-
-## Code Complexity Trade-off
-
-Rust's performance advantages come with real engineering costs. This section gives an honest picture of both sides.
-
-### Dependency & Build Footprint
-
-| Aspect | Java 21 | Rust |
-|--------|---------|------|
-| **Build Tool** | Maven (`pom.xml`) | Cargo (`Cargo.toml`) |
-| **Runtime** | Managed (AWS-provided JRE) | Custom (`provided.al2023` + bootstrap binary) |
-| **Deployment Package** | Fat JAR via `maven-shade-plugin` | Cross-compiled binary via `cargo lambda build --release` |
-| **Cross-compilation** | Not required | Required (`cargo lambda` or Docker with `cross`) |
-| **Compile Time (approx.)** | ~10–20s (incremental) | ~45–90s (full release build) |
-
-### Handler Comparison
-
-#### Java 21 Handler
-*(Full implementation available in [src/java_processor/src/main/java/java_processor/Main.java](src/java_processor/src/main/java/java_processor/Main.java))*
-
-```java
-public Void handleRequest(SQSEvent event, Context context) {
-    for (SQSEvent.SQSMessage message : event.getRecords()) {
-        String filename = message.getBody();
-        Segment segment = AWSXRay.beginSegment("java_function");
-        
-        try {
-            // ... [S3 Download & Object mapping omitted for brevity] ...
-            BufferedImage original = ImageIO.read(new java.io.ByteArrayInputStream(imageBytes));
-            BufferedImage compressed = compress(original, 0.7f);
-            // ... [S3 Upload omitted] ...
-        } catch (Exception e) {
-            segment.addException(e);
-            throw new RuntimeException(e);
-        } finally {
-            AWSXRay.endSegment();
-        }
-    }
-    return null;
-}
-```
-
-#### Rust Handler
-*(Full implementation available in [src/rust_processor/src/main.rs](src/rust_processor/src/main.rs))*
-
-```rust
-async fn handler(event: LambdaEvent<SqsEvent>, s3: S3Client, xray: XRayClient) -> Result<(), Error> {
-    for record in event.payload.records {
-        let filename = record.body.unwrap_or_default();
-        
-        // ... [S3 Download omitted for brevity] ...
-        // Strict error handling and memory safety enforced at compile time
-        let compressed = compress(image::load_from_memory(&image_data)?, 0.7);
-        // ... [S3 Upload & Custom XRay segment push omitted] ...
-    }
-    Ok(())
-}
-```
-
-## Limitations & Scope
-
-- **Workload type:** This benchmark is CPU-bound (image compression).
-- **JVM warmup:** The 30-minute cycle destroys Lambda environments before the JVM can reach sustained peak optimization.
-- **SnapStart excluded by design:** Reflects the default production experience without deployment-time optimizations.
-- **Single image size/type:** Benchmark used 800×600 JPEG inputs.
-
-## Product Structure
+## Repository layout
 
 ```text
-runtime_benchmark_lambda/
-├── terraform/               # IaC — deploys all AWS resources
-├── src/
-│   ├── java_processor/      # Java 21 Lambda handler
-│   └── rust_processor/      # Rust Lambda handler
-├── images/
-│   ├── original_images/     # Source images used in benchmark
-│   └── processed_images/    # Output from both runtimes
-├── reports/                 # Daily JSON reports exported from S3
-│
-└── scripts/                 # Notification, Logs lambda, and generators
+terraform/                   AWS fanout, queues, Lambdas and schedules
+src/java_processor/          Java 21 handler (no SnapStart)
+src/java_processor_snapstart/ Java 21 handler with SnapStart restore hook
+src/rust_processor/          Rust handler
+scripts/producer.py          Publishes input keys to SNS
+scripts/analyzer.py          Generates version-split daily JSON reports
+scripts/dashboard.py         Validates reports and renders six PNGs
+reports/                     Example analyzer output
+images/                      Architecture, dashboards and image examples
 ```
 
-## Reproducibility Guide (Tutorial)
+The Java handlers use Maven and a managed runtime; Rust uses Cargo and `provided.al2023`. See the [ordinary Java](src/java_processor/src/main/java/java_processor/Main.java), [SnapStart Java](src/java_processor_snapstart/src/main/java/java_processor_snapstart/Main.java), and [Rust](src/rust_processor/src/main.rs) implementations for actual handler logic and dependency choices rather than simplified pseudocode.
 
-To reproduce this benchmark in your own AWS account, follow this chronological pipeline.
+## Reproduce the charts
 
-### Prerequisites
-Ensure your local environment has the following installed:
-- **AWS CLI:** Authenticated with permissions.
-- **Terraform:** For infrastructure deployment.
-- **Python 3.7+:** To run the dataset generator.
-- **Java 21 & Maven:** To compile the Java Lambda.
-- **Rust & Cargo:** To cross-compile the Rust binary.
-
-### Step 1: Generate the Test Dataset
-The benchmark requires 100 deterministic images. Install the required HTTP library and run the fetcher:
+You can render the checked-in report **without AWS credentials**:
 
 ```bash
-pip install aiohttp
-python scripts/fetch_images.py
-```
-> *Images are saved to `images/original_images/`.*
-
-### Step 2: Build & Deploy
-Two deployment scripts are provided to package the Lambdas and execute Terraform. Choose the one for your OS.
-
-```bash
-# Linux / macOS
-./deploy.sh
-
-# Windows (or any OS with Python 3)
-python deploy.py
+python -m pip install matplotlib
+python scripts/dashboard.py --report reports/20260929T082758Z_daily_report.json
+python -m unittest scripts.test_dashboard
 ```
 
-*(Note: The script runs `terraform plan`. Once verified, run `terraform apply` manually to provision resources).*
+The command validates the report and writes `images/benchmark_{overview,latency,startup,stages,workload,resources}.png`. Omit `--report` to use the latest filename matching `reports/*_daily_report.json`, or use `--output-dir` to save PNGs elsewhere. Missing Rust stage timings remain unavailable instead of being silently plotted as zero.
 
-### Step 3: Trigger the Benchmark
-Either wait for the EventBridge cron schedule (every 30 mins) or manually invoke the **Notification Lambda** via the AWS Console to dispatch the 100 events immediately.
+## Reproduce the AWS workload
 
-### Step 4: Export Telemetry
-Consolidate X-Ray and CloudWatch data into a JSON report:
+**Prerequisites:** AWS CLI credentials, Terraform, Python, `zip`, Java 21/Maven, Rust/Cargo and the cross-compilation toolchain used by [the Rust Makefile](src/rust_processor/Makefile). Running the workload provisions resources and incurs AWS charges.
 
-```bash
-# Force log consolidation
-aws lambda invoke --function-name logs_lambda --payload '{}' response.json \
-  --region us-east-1 --cli-binary-format raw-in-base64-out
+1. Download the 100 seeded input images, then upload them to your input bucket when it exists:
 
-# Download the reports
-aws s3 sync s3://<YOUR_OUTPUT_BUCKET_NAME>/ reports/ \
-  --exclude "*" --include "*daily_report.json" \
-  --region us-east-1
-```
+   ```bash
+   python -m pip install aiohttp
+   python scripts/fetch_images.py
+   ```
 
-### Step 5: Generate Charts (Optional)
-To regenerate the performance visualization charts locally, the script needs actual telemetry data to parse. 
+2. Build the three processors and supporting Lambdas with `./deploy.sh` (Linux/macOS) or `python deploy.py`. Both prompt for bucket names and run **`terraform plan` only**. Review the plan and run `terraform apply` yourself in `terraform/` with the same bucket variables. The input bucket must contain exactly 100 objects before running the producer; for example:
 
-**Prerequisite:** You must complete **Step 4** first so that the `reports/` directory contains at least one daily JSON report.
->There is already an example inside the directory.
+   ```bash
+   aws s3 sync images/original_images/ s3://<INPUT_BUCKET>/ --region us-east-1
+   ```
 
-```bash
-pip install matplotlib
-python scripts/generate_charts.py
-```
+3. Allow the EventBridge producer schedule to run (every 30 minutes UTC), or invoke `noti_lambda` manually. The analyzer's default scheduled window is the last 24 hours; for a controlled comparison, invoke `logs_lambda` with an explicit UTC `start` and `end` **after** the test ends:
 
-The image will be saved inside the `images/` directory.
+   ```bash
+   aws lambda invoke --function-name logs_lambda \
+     --payload '{"start":"2026-09-28T22:30:00+00:00","end":"2026-09-29T08:27:58+00:00"}' \
+     --cli-binary-format raw-in-base64-out --region us-east-1 response.json
+   aws s3 sync s3://<LOGS_BUCKET>/reports/ reports/ \
+     --exclude '*' --include '*_daily_report.json' --region us-east-1
+   python scripts/dashboard.py
+   ```
+
+   Replace the example timestamps with **your own** completed test window. Verify the same successful S3 key set for all three functions independently before treating the runtime comparison as controlled.

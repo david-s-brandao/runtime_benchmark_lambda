@@ -53,9 +53,9 @@ resource "aws_lambda_event_source_mapping" "sqs_rust_trigger" {
 resource "aws_lambda_event_source_mapping" "sqs_java_snapstart_trigger" {
   event_source_arn = aws_sqs_queue.sqs_java_snapstart.arn
   # SnapStart is only available on published versions, not $LATEST.
-  function_name    = aws_lambda_function.java_snapstart_lambda.qualified_arn
-  batch_size       = 1
-  depends_on       = [aws_iam_role_policy_attachment.processor_sqs]
+  function_name = aws_lambda_function.java_snapstart_lambda.qualified_arn
+  batch_size    = 1
+  depends_on    = [aws_iam_role_policy_attachment.processor_sqs]
   scaling_config {
     maximum_concurrency = 100
   }
@@ -71,7 +71,7 @@ resource "aws_xray_sampling_rule" "java_high_sampling" {
   host           = "*"
   http_method    = "*"
   url_path       = "*"
-  resource_arn   = "arn:aws:lambda:us-east-1:586710034156:function:java_function"
+  resource_arn   = aws_lambda_function.java_lambda.arn
   version        = 1
 }
 
@@ -85,7 +85,7 @@ resource "aws_xray_sampling_rule" "rust_high_sampling" {
   host           = "*"
   http_method    = "*"
   url_path       = "*"
-  resource_arn   = "arn:aws:lambda:us-east-1:586710034156:function:rust_function"
+  resource_arn   = aws_lambda_function.rust_lambda.arn
   version        = 1
 }
 
