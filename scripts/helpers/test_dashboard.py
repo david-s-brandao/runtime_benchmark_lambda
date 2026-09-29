@@ -36,12 +36,6 @@ class DashboardTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "p99"):
             validate_report(report)
 
-    def test_unavailable_xray_is_not_zero_error_rate(self):
-        report = copy.deepcopy(self.report)
-        report["functions"]["rust_function"]["xray"]["error_count"] = 0
-        with self.assertRaisesRegex(ValueError, "zero traces"):
-            validate_report(report)
-
     def test_missing_stages_allowed_but_broken_stages_rejected(self):
         report = copy.deepcopy(self.report)
         report["functions"]["rust_function"]["cloudwatch_by_version"]["$LATEST"][

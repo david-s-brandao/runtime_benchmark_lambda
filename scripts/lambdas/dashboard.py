@@ -84,7 +84,7 @@ def validate_report(report):
     that requires per-invocation keys, which the report does not contain.
     """
     obj(report, "report")
-    for key in ("_comment", "window"):
+    for key in ("window",):
         if not isinstance(field(report, key, "report"), str):
             fail(f"report.{key}", "expected text")
     notes = field(report, "notes", "report")
@@ -153,30 +153,6 @@ def validate_report(report):
                         < metrics["duration_ms_success_only"]["avg"]):
                     fail(p, "startup-inclusive average is below execution average")
 
-        xray = obj(field(function, "xray", path), path + ".xray")
-        xp = path + ".xray"
-        trace_count = number(field(xray, "trace_count", xp), xp + ".trace_count", integer=True)
-        for key in ("error_count", "fault_count"):
-            value = field(xray, key, xp)
-            if value is not None and number(value, f"{xp}.{key}", integer=True) > trace_count:
-                fail(f"{xp}.{key}", "exceeds trace count")
-        phases = field(xray, "phase_ms_sampled", xp)
-        if trace_count == 0:
-            if any(xray[key] is not None for key in ("error_count", "fault_count", "phase_ms_sampled")):
-                fail(xp, "zero traces must have unavailable counts and phases")
-            if not isinstance(field(xray, "note", xp), str):
-                fail(xp + ".note", "expected text")
-        else:
-            for key in ("error_count", "fault_count", "avg_response_time_ms"):
-                if xray.get(key) is None:
-                    fail(f"{xp}.{key}", "required when traces exist")
-            number(xray["avg_response_time_ms"], xp + ".avg_response_time_ms")
-            for phase, sample in obj(phases, xp + ".phase_ms_sampled").items():
-                pp = f"{xp}.phase_ms_sampled.{phase}"
-                count = number(field(sample, "count", pp), pp + ".count", integer=True)
-                stats(field(sample, "stats", pp), pp + ".stats", optional=True)
-                if (sample["stats"] is None) != (count == 0):
-                    fail(pp, "sample count and stats disagree")
     return report
 
 

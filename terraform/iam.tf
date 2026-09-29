@@ -59,7 +59,6 @@ resource "aws_iam_role_policy" "logs_policy" {
     Version = "2012-10-17"
     Statement = [
       { Effect = "Allow", Action = ["logs:FilterLogEvents", "logs:GetLogEvents"], Resource = "*" },
-      { Effect = "Allow", Action = ["xray:GetTraceSummaries", "xray:BatchGetTraces"], Resource = "*" },
       { Effect = "Allow", Action = ["s3:PutObject"], Resource = "${aws_s3_bucket.logs_bucket.arn}/*" }
     ]
   })
@@ -80,19 +79,4 @@ resource "aws_iam_role_policy_attachment" "processor_logs" {
 resource "aws_iam_role_policy_attachment" "logs_logs" {
   role       = aws_iam_role.logs_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-}
-
-resource "aws_iam_role_policy" "logs_xray_policy" {
-  role = aws_iam_role.logs_role.id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      { Effect = "Allow", Action = ["xray:GetTraceSummaries", "xray:BatchGetTraces"], Resource = "*" }
-    ]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "lambda_xray_policy" {
-  role       = aws_iam_role.processor_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess"
 }

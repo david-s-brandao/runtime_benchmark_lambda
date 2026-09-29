@@ -14,7 +14,7 @@ class AnalyzerTests(unittest.TestCase):
         sys.modules["boto3"] = boto3
         os.environ.setdefault("LOGS_BUCKET", "test-logs")
         spec = importlib.util.spec_from_file_location(
-            "analyzer", os.path.join(os.path.dirname(__file__), "analyzer.py")
+            "analyzer", os.path.join(os.path.dirname(__file__), "..", "lambdas", "analyzer.py")
         )
         cls.analyzer = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.analyzer)
@@ -50,12 +50,6 @@ class AnalyzerTests(unittest.TestCase):
         self.assertEqual(result["3"]["unique_processed_images"], 1)
         self.assertEqual(result["3"]["duration_ms_success_only"]["avg"], 500)
         self.assertIsNone(result["3"]["restore_duration_ms_observed"])
-
-    def test_zero_xray_traces_are_not_zero_errors(self):
-        self.analyzer.xray.get_trace_summaries.return_value = {"TraceSummaries": []}
-        result = self.analyzer.get_xray_traces("java_function", None, None)
-        self.assertEqual(result["trace_count"], 0)
-        self.assertIsNone(result["error_count"])
 
     def test_startup_is_added_only_to_its_own_invocation(self):
         def event(timestamp, message):
